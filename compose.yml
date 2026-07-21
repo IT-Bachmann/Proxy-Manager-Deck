@@ -52,6 +52,10 @@ services:
 networks:
   edge:
     enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.30.72.0/24
+        - subnet: fd42:7072:6f78:79::/64
 volumes:
   proxydeck_data:
   generated_config:

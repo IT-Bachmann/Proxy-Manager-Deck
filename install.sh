@@ -44,6 +44,16 @@ if [ "$(uname -s)" != "Linux" ]; then
   die "This installer supports Linux. On other systems install Docker Compose and run: docker compose up -d --build"
 fi
 
+container_type=""
+if has systemd-detect-virt; then container_type=$(systemd-detect-virt --container 2>/dev/null || true); fi
+if [ "$container_type" = "lxc" ] || grep -qaE 'lxc|container=' /proc/1/environ 2>/dev/null; then
+  warn "LXC detected. On the Proxmox host, enable nesting=1 and keyctl=1 for this container before running Docker."
+  warn "Example on the PVE host: pct set CTID -features nesting=1,keyctl=1"
+  if [ -r /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" = "1" ]; then
+    warn "IPv6 is disabled inside this LXC. ProxyDeck starts with its private Docker ULA subnet, but external IPv6 upstreams require IPv6 on the LXC network interface."
+  fi
+fi
+
 architecture=$(uname -m)
 case "$architecture" in
   x86_64|amd64|aarch64|arm64) ;;
