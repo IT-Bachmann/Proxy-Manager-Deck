@@ -86,7 +86,7 @@ Unterstützt werden Paketmanager-basierte Installationen auf:
 
 Das Skript verwendet ausschließlich den vorhandenen Paketmanager, erzeugt `.env` mit sicheren Zufallswerten, validiert Docker Compose und startet die Container. Wenn Docker bereits separat verwaltet wird:
 
-Vor dem Start prüft es außerdem Architektur, freien Speicherplatz, Docker-Daemon, Compose-Version, die Ports 80/443/8080, IPv6 sowie aktive UFW-/firewalld-Konfigurationen. Nach dem Start wartet es bis zu 60 Sekunden auf eine echte HTTP-Antwort des Dashboards und zeigt bei Fehlern die letzten Container-Logs.
+Vor dem Start prüft es außerdem Architektur, freien Speicherplatz, Docker-Daemon, Compose-Version, die Ports 80/443/8181, IPv6 sowie aktive UFW-/firewalld-Konfigurationen. Nach dem Start wartet es bis zu 60 Sekunden auf eine echte HTTP-Antwort des Dashboards und zeigt bei Fehlern die letzten Container-Logs.
 
 ```bash
 ./install.sh --skip-docker-install
@@ -116,15 +116,23 @@ Nicht jede exotische Distribution kann automatisch unterstützt werden. Auf ande
    docker compose up -d --build
    ```
 
-4. Dashboard über `http://127.0.0.1:8080` öffnen und als `admin` anmelden.
+4. Dashboard über `http://127.0.0.1:8181` öffnen und als `admin` anmelden.
 
 Das Dashboard bindet absichtlich nur an Loopback. Für einen entfernten Server empfiehlt sich zunächst ein SSH-Tunnel:
 
 ```bash
-ssh -L 8080:127.0.0.1:8080 user@server
+ssh -L 8181:127.0.0.1:8181 user@server
 ```
 
 ## Vollständige Demo testen
+
+Die Demo ist unabhängig vom Dashboard über die IP-Adresse des Docker-Servers und Port `45131` erreichbar:
+
+```text
+http://SERVER-IP:45131
+```
+
+Beispiel: `http://192.168.178.20:45131`
 
 Beim ersten Start wird `demo.localhost` mit dem Upstream `demo:80` angelegt. Der Gateway-Container veröffentlicht Port 80. Auf demselben Rechner funktioniert daher:
 

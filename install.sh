@@ -169,7 +169,7 @@ existing_project=$($COMPOSE ps -q 2>/dev/null || true)
 if [ -n "$existing_project" ]; then
   warn "An existing ProxyDeck Compose project was detected; host-port collision checks are skipped for this upgrade."
 else
-  for checked_port in 80 443 8080; do
+  for checked_port in 80 443 8181 45131; do
     if port_in_use "$checked_port"; then conflicting_ports="$conflicting_ports $checked_port"; fi
   done
 fi
@@ -184,9 +184,9 @@ if [ -r /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv
 fi
 
 if has ufw && $AS_ROOT ufw status 2>/dev/null | grep -q 'Status: active'; then
-  warn "UFW is active. Allow TCP 80/443 and every configured stream port manually."
+  warn "UFW is active. Allow TCP 80/443, demo TCP 45131 and every configured stream port manually."
 elif has firewall-cmd && $AS_ROOT firewall-cmd --state >/dev/null 2>&1; then
-  warn "firewalld is active. Allow TCP 80/443 and every configured stream port manually."
+  warn "firewalld is active. Allow TCP 80/443, demo TCP 45131 and every configured stream port manually."
 fi
 
 if [ ! -f .env ]; then
@@ -201,10 +201,11 @@ if [ ! -f .env ]; then
     printf 'PROXYDECK_SECURE_COOKIE=0\n'
   } > .env
   {
-    printf 'ProxyDeck Dashboard: http://127.0.0.1:8080\n'
+    printf 'ProxyDeck Dashboard: http://127.0.0.1:8181\n'
+    printf 'ProxyDeck Demo: http://SERVER-IP:45131\n'
     printf 'Benutzer: admin\n'
     printf 'Passwort: %s\n' "$admin_password"
-    printf 'Remote-Zugriff: ssh -L 8080:127.0.0.1:8080 user@server\n'
+    printf 'Remote-Zugriff: ssh -L 8181:127.0.0.1:8181 user@server\n'
   } > proxydeck-login.txt
   chmod 600 .env proxydeck-login.txt
   credentials_created=1
@@ -225,7 +226,7 @@ if [ "$NO_START" -eq 0 ]; then
   attempt=1
   ready=0
   while [ "$attempt" -le 30 ]; do
-    if curl -fsS --max-time 2 http://127.0.0.1:8080/ >/dev/null 2>&1; then ready=1; break; fi
+    if curl -fsS --max-time 2 http://127.0.0.1:8181/ >/dev/null 2>&1; then ready=1; break; fi
     sleep 2
     attempt=$((attempt + 1))
   done
@@ -236,12 +237,13 @@ if [ "$NO_START" -eq 0 ]; then
 fi
 
 printf '\n\033[1;32mProxyDeck installation prepared successfully.\033[0m\n'
-printf 'Dashboard: http://127.0.0.1:8080\n'
+printf 'Dashboard: http://127.0.0.1:8181\n'
+printf 'Demo:      http://SERVER-IP:45131\n'
 printf 'User:      admin\n'
 if [ "$credentials_created" -eq 1 ]; then
   printf 'Password:  %s\n' "$admin_password"
   printf '\nSave this password now. It is stored in .env and proxydeck-login.txt and will not be printed again.\n'
 fi
 printf '\nFor remote access, use an SSH tunnel:\n'
-printf '  ssh -L 8080:127.0.0.1:8080 user@server\n'
+printf '  ssh -L 8181:127.0.0.1:8181 user@server\n'
 printf '\nNext: read SECURITY.md and change PROXYDECK_SECURE_COOKIE only after enabling HTTPS.\n'
