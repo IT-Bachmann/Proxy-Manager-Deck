@@ -327,7 +327,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/branding":
             with connect() as db: settings = {row["key"]: row["value"] for row in db.execute("SELECT key,value FROM settings WHERE key IN ('accent','background','logo','favicon','gateway_ipv4','gateway_ipv6')")}
-            self.send_json(200, {"accent": settings.get("accent", "#1ca471"), "background": settings.get("background", "#f4f6f5"), "logo": settings.get("logo", ""), "favicon": settings.get("favicon", ""), "gateway_ipv4": settings.get("gateway_ipv4", ""), "gateway_ipv6": settings.get("gateway_ipv6", "")}); return
+            self.send_json(200, {"accent": settings.get("accent", "#16966a"), "background": settings.get("background", "#f3f6f4"), "logo": settings.get("logo", ""), "favicon": settings.get("favicon", ""), "gateway_ipv4": settings.get("gateway_ipv4", ""), "gateway_ipv6": settings.get("gateway_ipv6", "")}); return
         if path == "/api/session":
             session = self.require()
             if session: self.send_json(200, {"user": {"id": session["id"], "username": session["username"], "role": session["role"]}, "csrf": session["csrf"]})
