@@ -199,6 +199,22 @@ elif has firewall-cmd && $AS_ROOT firewall-cmd --state >/dev/null 2>&1; then
   warn "firewalld is active. Allow TCP 80/443, demo TCP 45130 and every configured stream port manually."
 fi
 
+primary_ipv4=""
+primary_ipv6=""
+if has ip; then
+  primary_ipv4=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)
+  primary_ipv6=$(ip -6 route get 2606:4700:4700::1111 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)
+  if [ -z "$primary_ipv6" ]; then
+    primary_ipv6=$(ip -6 -o addr show scope global 2>/dev/null | awk 'NR==1 {split($4,a,"/"); print a[1]}' || true)
+  fi
+fi
+if [ -z "$primary_ipv4" ] && has hostname; then
+  primary_ipv4=$(hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i !~ /:/ && $i !~ /^127\./){print $i; exit}}' || true)
+fi
+dashboard_host=${primary_ipv4:-localhost}
+dashboard_url="http://${dashboard_host}:8181"
+demo_url="http://${dashboard_host}:45130"
+
 if [ ! -f .env ]; then
   say "Generating secure local configuration"
   admin_password=$(openssl rand -base64 30 | tr -d '\n')
@@ -211,8 +227,12 @@ if [ ! -f .env ]; then
     printf 'PROXYDECK_SECURE_COOKIE=0\n'
   } > .env
   {
-    printf 'ProxyDeck Dashboard: http://127.0.0.1:8181\n'
-    printf 'ProxyDeck Demo: http://SERVER-IP:45130\n'
+    printf 'ProxyDeck Dashboard IPv4: %s\n' "$dashboard_url"
+    printf 'ProxyDeck Demo IPv4: %s\n' "$demo_url"
+    if [ -n "$primary_ipv6" ]; then
+      printf 'ProxyDeck Dashboard IPv6: http://[%s]:8181\n' "$primary_ipv6"
+      printf 'ProxyDeck Demo IPv6: http://[%s]:45130\n' "$primary_ipv6"
+    fi
     printf 'Benutzer: admin\n'
     printf 'Passwort: %s\n' "$admin_password"
     printf 'Remote-Zugriff: ssh -L 8181:127.0.0.1:8181 user@server\n'
@@ -247,8 +267,12 @@ if [ "$NO_START" -eq 0 ]; then
 fi
 
 printf '\n\033[1;32mProxyDeck installation prepared successfully.\033[0m\n'
-printf 'Dashboard: http://127.0.0.1:8181\n'
-printf 'Demo:      http://SERVER-IP:45130\n'
+printf 'Dashboard IPv4: %s\n' "$dashboard_url"
+printf 'Demo IPv4:      %s\n' "$demo_url"
+if [ -n "$primary_ipv6" ]; then
+  printf 'Dashboard IPv6: http://[%s]:8181\n' "$primary_ipv6"
+  printf 'Demo IPv6:      http://[%s]:45130\n' "$primary_ipv6"
+fi
 printf 'User:      admin\n'
 if [ "$credentials_created" -eq 1 ]; then
   printf 'Password:  %s\n' "$admin_password"
