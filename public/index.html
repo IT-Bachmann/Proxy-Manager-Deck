@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/styles.css?v=20260721-3" />
+    <link rel="stylesheet" href="/styles.css?v=20260721-4" />
   </head>
   <body>
     <div class="app-shell">
@@ -20,17 +20,19 @@
         <nav>
           <a href="#" class="active" id="dashboardLink"><span class="nav-icon">⌂</span>Übersicht</a>
           <a href="#" id="proxyHostsLink"><span class="nav-icon">⇄</span>Proxy Hosts <b>0</b></a>
-          <a href="#" data-manager="traffic"><span class="nav-icon">↗</span>Traffic &amp; Hits</a>
           <a href="#" data-manager="redirects"><span class="nav-icon">↗</span>Weiterleitungen</a>
-          <a href="#" data-manager="certificates"><span class="nav-icon">⌁</span>Zertifikate</a>
           <a href="#" data-manager="streams"><span class="nav-icon">≋</span>Streams</a>
+          <a href="#" data-manager="certificates"><span class="nav-icon">◇</span>Zertifikate</a>
+          <a href="#" data-manager="providers"><span class="nav-icon">⌘</span>DNS-Plugins</a>
+          <a href="#" data-manager="health"><span class="nav-icon">◉</span>Healthchecks</a>
           <a href="#" data-manager="users"><span class="nav-icon">♙</span>Benutzer</a>
           <a href="#" data-manager="notifications"><span class="nav-icon">♢</span>Benachrichtigungen</a>
           <a href="#" data-manager="audit"><span class="nav-icon">▤</span>Aktivitäten</a>
+          <a href="#" data-manager="traffic"><span class="nav-icon">↗</span>Traffic &amp; Hits</a>
+          <a href="#" data-manager="branding"><span class="nav-icon">⚙</span>Design</a>
         </nav>
         <div class="sidebar-bottom">
           <div class="system-state"><span></span><div><strong>Gateway online</strong><small>IPv4 + IPv6 aktiv</small></div></div>
-          <a href="#" data-manager="branding"><span class="nav-icon">⚙</span>Einstellungen</a>
           <div class="account"><div class="avatar">MM</div><div><strong>Max Mustermann</strong><small>Administrator</small></div><button id="logoutButton">Logout</button></div>
         </div>
       </aside>
@@ -88,6 +90,6 @@
     <dialog id="managerDialog" class="manager-dialog"><div class="dialog-head"><div><h2 id="managerTitle">Verwaltung</h2><p id="managerSubtitle">ProxyDeck-Systemobjekte</p></div><button id="closeManager">×</button></div><div id="managerContent" class="manager-content"></div></dialog>
     <div class="login-screen" id="loginScreen"><div class="login-book" aria-hidden="true"><span class="book-back"></span><span class="book-pages"></span><span class="book-cover"><i class="brand-mark"><i></i><i></i></i></span></div><form class="login-card" id="loginForm"><div class="login-brand"><span class="brand-mark"><i></i><i></i></span><img class="custom-logo" alt="" /><strong>proxydeck</strong></div><h1>Willkommen zurück</h1><p>Melde dich an, um dein Gateway zu verwalten.</p><label><span>Benutzername</span><input id="loginUser" autocomplete="username" value="admin" required /></label><label><span>Passwort</span><input id="loginPassword" type="password" autocomplete="current-password" required /></label><div class="login-error" id="loginError"></div><button class="button primary" type="submit">Sicher anmelden</button><small>Der erste Zugang wird über die Docker-Umgebung festgelegt.</small></form></div>
     <div class="toast" id="toast"><span>✓</span><div><strong>Gespeichert</strong><small>Die Konfiguration wurde erfolgreich geprüft.</small></div></div>
-    <script src="/app.js?v=20260721-3"></script>
+    <script src="/app.js?v=20260721-4"></script>
   </body>
 </html>
