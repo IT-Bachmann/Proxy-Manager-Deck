@@ -26,6 +26,47 @@ ProxyDeck ist eine eigenständige Reverse-Proxy-Verwaltung mit mehreren IPv4-/IP
 
 ## Schnellstart
 
+### Von GitHub auf den Server laden
+
+Offizielles Repository: [IT-Bachmann/Proxy-Manager-Deck](https://github.com/IT-Bachmann/Proxy-Manager-Deck)
+
+Mit Git:
+
+```bash
+git clone https://github.com/IT-Bachmann/Proxy-Manager-Deck.git
+cd Proxy-Manager-Deck
+chmod +x install.sh
+sudo ./install.sh
+```
+
+Ohne Git mit `curl`:
+
+```bash
+curl -fsSL https://github.com/IT-Bachmann/Proxy-Manager-Deck/archive/refs/heads/main.tar.gz -o proxydeck.tar.gz
+tar -xzf proxydeck.tar.gz
+cd Proxy-Manager-Deck-main
+chmod +x install.sh
+sudo ./install.sh
+```
+
+Oder mit `wget`:
+
+```bash
+wget -O proxydeck.tar.gz https://github.com/IT-Bachmann/Proxy-Manager-Deck/archive/refs/heads/main.tar.gz
+tar -xzf proxydeck.tar.gz
+cd Proxy-Manager-Deck-main
+chmod +x install.sh
+sudo ./install.sh
+```
+
+Die Zugangsdaten erscheinen bei der ersten Installation einmal im Terminal und werden zusätzlich mit Dateirechten `0600` in `proxydeck-login.txt` gespeichert. Anzeigen:
+
+```bash
+sudo cat proxydeck-login.txt
+```
+
+Die vollständige interne Konfiguration liegt in `.env`. Beide Dateien dürfen niemals auf GitHub hochgeladen oder weitergegeben werden.
+
 ### Automatische Linux-Installation
 
 Auf einem unterstützten Linux-System kann ProxyDeck inklusive Docker-Vorbereitung installiert werden:

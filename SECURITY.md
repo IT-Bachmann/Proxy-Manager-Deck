@@ -16,6 +16,7 @@ Never include real passwords, API tokens, private keys, certificates, database f
 - Set a unique administrator password of at least 16 characters.
 - Generate a unique `PROXYDECK_SECRET_KEY` and back it up separately.
 - Never commit `.env`, SQLite databases, certificates or generated Nginx files.
+- Never commit or share `proxydeck-login.txt`; it contains the initial administrator password.
 - Restrict DNS API tokens to the required zones and DNS-edit permissions.
 - Back up Docker volumes and test restoration regularly.
 - Review provider compatibility before enabling unattended certificate renewal.

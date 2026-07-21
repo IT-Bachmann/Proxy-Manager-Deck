@@ -200,6 +200,13 @@ if [ ! -f .env ]; then
     printf 'PROXYDECK_SECRET_KEY=%s\n' "$secret_key"
     printf 'PROXYDECK_SECURE_COOKIE=0\n'
   } > .env
+  {
+    printf 'ProxyDeck Dashboard: http://127.0.0.1:8080\n'
+    printf 'Benutzer: admin\n'
+    printf 'Passwort: %s\n' "$admin_password"
+    printf 'Remote-Zugriff: ssh -L 8080:127.0.0.1:8080 user@server\n'
+  } > proxydeck-login.txt
+  chmod 600 .env proxydeck-login.txt
   credentials_created=1
 else
   credentials_created=0
@@ -233,7 +240,7 @@ printf 'Dashboard: http://127.0.0.1:8080\n'
 printf 'User:      admin\n'
 if [ "$credentials_created" -eq 1 ]; then
   printf 'Password:  %s\n' "$admin_password"
-  printf '\nSave this password now. It is stored in .env and will not be printed again.\n'
+  printf '\nSave this password now. It is stored in .env and proxydeck-login.txt and will not be printed again.\n'
 fi
 printf '\nFor remote access, use an SSH tunnel:\n'
 printf '  ssh -L 8080:127.0.0.1:8080 user@server\n'
