@@ -326,8 +326,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/branding":
-            with connect() as db: settings = {row["key"]: row["value"] for row in db.execute("SELECT key,value FROM settings WHERE key IN ('accent','background','logo','favicon')")}
-            self.send_json(200, {"accent": settings.get("accent", "#1ca471"), "background": settings.get("background", "#f4f6f5"), "logo": settings.get("logo", ""), "favicon": settings.get("favicon", "")}); return
+            with connect() as db: settings = {row["key"]: row["value"] for row in db.execute("SELECT key,value FROM settings WHERE key IN ('accent','background','logo','favicon','gateway_ipv4','gateway_ipv6')")}
+            self.send_json(200, {"accent": settings.get("accent", "#1ca471"), "background": settings.get("background", "#f4f6f5"), "logo": settings.get("logo", ""), "favicon": settings.get("favicon", ""), "gateway_ipv4": settings.get("gateway_ipv4", ""), "gateway_ipv6": settings.get("gateway_ipv6", "")}); return
         if path == "/api/session":
             session = self.require()
             if session: self.send_json(200, {"user": {"id": session["id"], "username": session["username"], "role": session["role"]}, "csrf": session["csrf"]})
@@ -398,11 +398,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/branding":
             if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
             accent, background, logo, favicon = body.get("accent", ""), body.get("background", ""), body.get("logo", ""), body.get("favicon", "")
+            gateway_ipv4, gateway_ipv6 = body.get("gateway_ipv4", "").strip(), body.get("gateway_ipv6", "").strip()
             image_re = re.compile(r"^data:image/(?:png|jpeg|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/=]+$")
             if any(not re.fullmatch(r"#[0-9a-fA-F]{6}", color) for color in (accent, background)) or any(value and (len(value) > 700_000 or not image_re.fullmatch(value)) for value in (logo, favicon)):
                 self.send_json(400, {"error": "Farbe oder Bilddatei ungültig (PNG/JPG/ICO, maximal 500 KB)"}); return
+            try:
+                if gateway_ipv4 and ipaddress.ip_address(gateway_ipv4).version != 4: raise ValueError()
+                if gateway_ipv6 and ipaddress.ip_address(gateway_ipv6).version != 6: raise ValueError()
+            except ValueError: self.send_json(400, {"error": "Gateway-IPv4 oder Gateway-IPv6 ist ungültig"}); return
             with connect() as db:
-                for key, value in (("accent", accent.lower()), ("background", background.lower()), ("logo", logo), ("favicon", favicon)):
+                for key, value in (("accent", accent.lower()), ("background", background.lower()), ("logo", logo), ("favicon", favicon), ("gateway_ipv4", gateway_ipv4), ("gateway_ipv6", gateway_ipv6)):
                     db.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
             self.audit(session["id"], "branding.update", accent.lower()); self.send_json(200, {"ok": True}); return
         if path == "/api/proxy-hosts":

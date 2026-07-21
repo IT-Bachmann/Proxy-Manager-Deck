@@ -18,8 +18,9 @@
           <span>proxydeck</span>
         </a>
         <nav>
-          <a href="#" data-manager="traffic"><span class="nav-icon">⌂</span>Traffic &amp; Hits</a>
+          <a href="#"><span class="nav-icon">⌂</span>Übersicht</a>
           <a href="#" class="active"><span class="nav-icon">⇄</span>Proxy Hosts <b>0</b></a>
+          <a href="#" data-manager="traffic"><span class="nav-icon">↗</span>Traffic &amp; Hits</a>
           <a href="#" data-manager="redirects"><span class="nav-icon">↗</span>Weiterleitungen</a>
           <a href="#" data-manager="certificates"><span class="nav-icon">⌁</span>Zertifikate</a>
           <a href="#" data-manager="streams"><span class="nav-icon">≋</span>Streams</a>
@@ -76,7 +77,7 @@
 
             <aside class="summary-column">
               <section class="card summary-card"><h3>Live-Status</h3><div class="uptime"><div class="ring"><strong>–</strong><small>Uptime</small></div><div><strong>Noch nicht konfiguriert</strong><small>Proxy Host zuerst speichern</small></div></div><div class="metric"><span>Aktive Ziele</span><strong id="activeCount">0 / 0</strong></div><div class="metric"><span>Antwortzeit</span><strong>–</strong></div><div class="metric"><span>SSL-Zertifikat</span><strong>–</strong></div></section>
-              <section class="card dns-card"><h3>DNS-Einträge</h3><p>Beide Einträge zeigen auf dieses Gateway.</p><div><span class="record">A</span><code>185.•••.42.10</code><i>✓</i></div><div><span class="record purple">AAAA</span><code>2a02:••••:8b2::1</code><i>✓</i></div><button class="text-button">DNS-Anleitung anzeigen →</button></section>
+              <section class="card dns-card"><h3>DNS-Einträge</h3><p>Diese Werte werden unter Einstellungen festgelegt.</p><div><span class="record">A</span><code id="dnsIpv4">Nicht konfiguriert</code><i id="dnsIpv4State">–</i></div><div><span class="record purple">AAAA</span><code id="dnsIpv6">Nicht konfiguriert</code><i id="dnsIpv6State">–</i></div><button class="text-button" id="dnsHelpButton">DNS-Anleitung anzeigen →</button></section>
             </aside>
           </div>
         </section>
