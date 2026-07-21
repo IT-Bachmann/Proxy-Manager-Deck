@@ -1,0 +1,55 @@
+services:
+  control:
+    build: .
+    restart: unless-stopped
+    environment:
+      PROXYDECK_ADMIN_USER: ${PROXYDECK_ADMIN_USER:-admin}
+      PROXYDECK_ADMIN_PASSWORD: ${PROXYDECK_ADMIN_PASSWORD:?Set PROXYDECK_ADMIN_PASSWORD in .env}
+      PROXYDECK_SECRET_KEY: ${PROXYDECK_SECRET_KEY:?Set PROXYDECK_SECRET_KEY in .env}
+      PROXYDECK_SECURE_COOKIE: ${PROXYDECK_SECURE_COOKIE:-0}
+    ports:
+      - "127.0.0.1:8080:3000"
+    volumes:
+      - proxydeck_data:/data
+      - generated_config:/generated
+      - letsencrypt:/etc/letsencrypt
+      - acme_webroot:/var/www/acme
+    networks: [edge]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  gateway:
+    build: ./gateway
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      # Stream-Ports müssen Docker bekannt sein. Weitere Ports hier ergänzen.
+      - "9000:9000/tcp"
+      - "9000:9000/udp"
+    volumes:
+      - generated_config:/etc/nginx/proxydeck:ro
+      - letsencrypt:/etc/letsencrypt:ro
+      - acme_webroot:/var/www/acme:ro
+    networks: [edge]
+    depends_on:
+      control: { condition: service_healthy }
+
+  demo:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./demo:/usr/share/nginx/html:ro
+    networks: [edge]
+
+networks:
+  edge:
+    enable_ipv6: true
+volumes:
+  proxydeck_data:
+  generated_config:
+  letsencrypt:
+  acme_webroot:

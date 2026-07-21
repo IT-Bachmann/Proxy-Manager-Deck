@@ -1,0 +1,511 @@
+import base64
+import hashlib
+import hmac
+import http.cookies
+import http.server
+import ipaddress
+import json
+import os
+import re
+import secrets
+import shutil
+import smtplib
+import socket
+import sqlite3
+import ssl
+import subprocess
+import threading
+import time
+import urllib.parse
+import urllib.request
+from email.message import EmailMessage
+from pathlib import Path
+from cryptography.fernet import Fernet, InvalidToken
+
+ROOT = Path(__file__).resolve().parent
+PUBLIC = ROOT / "public"
+DATA = Path(os.environ.get("PROXYDECK_DATA", ROOT / "data"))
+GENERATED = Path(os.environ.get("PROXYDECK_CONFIG", ROOT / "generated"))
+ACME_WEBROOT = Path(os.environ.get("PROXYDECK_ACME_WEBROOT", ROOT / "acme-webroot"))
+DB = DATA / "proxydeck.db"
+PORT = int(os.environ.get("PORT", "3000"))
+SESSION_TTL = 60 * 60 * 12
+HOST_RE = re.compile(r"^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$")
+MIME = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml"}
+
+for directory in (DATA, GENERATED, ACME_WEBROOT):
+    directory.mkdir(parents=True, exist_ok=True)
+
+
+def connect():
+    db = sqlite3.connect(DB, timeout=10)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA foreign_keys=ON")
+    db.execute("PRAGMA journal_mode=WAL")
+    return db
+
+
+def password_hash(password, salt=None):
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 310_000)
+    return f"pbkdf2_sha256$310000${base64.b64encode(salt).decode()}${base64.b64encode(digest).decode()}"
+
+
+def password_ok(password, encoded):
+    try:
+        _, rounds, salt, expected = encoded.split("$")
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode(), base64.b64decode(salt), int(rounds))
+        return hmac.compare_digest(actual, base64.b64decode(expected))
+    except (ValueError, TypeError):
+        return False
+
+
+def init_db():
+    with connect() as db:
+        db.executescript("""
+        CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','operator','viewer')), enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, csrf TEXT NOT NULL, expires_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS proxy_hosts(id INTEGER PRIMARY KEY, domain TEXT UNIQUE NOT NULL, scheme TEXT NOT NULL, port INTEGER NOT NULL, websocket INTEGER NOT NULL DEFAULT 1, strategy TEXT NOT NULL DEFAULT 'least_conn', ssl_enabled INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS upstreams(id INTEGER PRIMARY KEY, proxy_id INTEGER NOT NULL REFERENCES proxy_hosts(id) ON DELETE CASCADE, address TEXT NOT NULL, family TEXT NOT NULL, weight INTEGER NOT NULL DEFAULT 100, mode TEXT NOT NULL DEFAULT 'active', health_path TEXT NOT NULL DEFAULT '/', healthy INTEGER, latency_ms INTEGER, checked_at INTEGER);
+        CREATE TABLE IF NOT EXISTS redirects(id INTEGER PRIMARY KEY, domain TEXT UNIQUE NOT NULL, target TEXT NOT NULL, code INTEGER NOT NULL DEFAULT 301, enabled INTEGER NOT NULL DEFAULT 1);
+        CREATE TABLE IF NOT EXISTS streams(id INTEGER PRIMARY KEY, listen_port INTEGER NOT NULL, protocol TEXT NOT NULL, target_host TEXT NOT NULL, target_port INTEGER NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, UNIQUE(listen_port,protocol));
+        CREATE TABLE IF NOT EXISTS certificates(id INTEGER PRIMARY KEY, domain TEXT UNIQUE NOT NULL, email TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', expires_at INTEGER, last_error TEXT, created_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS acme_providers(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, provider TEXT NOT NULL, secret_data TEXT NOT NULL, created_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS notification_channels(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, channel_type TEXT NOT NULL CHECK(channel_type IN ('smtp','telegram','whatsapp')), config_data TEXT NOT NULL, events TEXT NOT NULL DEFAULT '["down","up","certificate"]', enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL);
+        """)
+        cert_columns = {row[1] for row in db.execute("PRAGMA table_info(certificates)")}
+        if "challenge" not in cert_columns: db.execute("ALTER TABLE certificates ADD COLUMN challenge TEXT NOT NULL DEFAULT 'http-01'")
+        if "provider_id" not in cert_columns: db.execute("ALTER TABLE certificates ADD COLUMN provider_id INTEGER REFERENCES acme_providers(id)")
+        if not db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+            password = os.environ.get("PROXYDECK_ADMIN_PASSWORD")
+            if not password or len(password) < 16:
+                raise RuntimeError("PROXYDECK_ADMIN_PASSWORD must contain at least 16 characters on first start")
+            db.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)", (os.environ.get("PROXYDECK_ADMIN_USER", "admin"), password_hash(password), "admin", int(time.time())))
+        if not db.execute("SELECT 1 FROM proxy_hosts LIMIT 1").fetchone():
+            cur = db.execute("INSERT INTO proxy_hosts(domain,scheme,port,websocket,strategy,enabled,created_at) VALUES(?,?,?,?,?,?,?)", ("demo.localhost", "http", 80, 1, "least_conn", 1, int(time.time())))
+            db.execute("INSERT INTO upstreams(proxy_id,address,family,weight,mode,health_path) VALUES(?,?,?,?,?,?)", (cur.lastrowid, "demo", "hostname", 100, "active", "/"))
+
+
+def rowdict(row):
+    return dict(row) if row else None
+
+
+def secret_box():
+    key = os.environ.get("PROXYDECK_SECRET_KEY", "")
+    if not key:
+        raise RuntimeError("PROXYDECK_SECRET_KEY is required for DNS provider credentials")
+    try: return Fernet(key.encode())
+    except ValueError as error: raise RuntimeError("PROXYDECK_SECRET_KEY must be a Fernet key") from error
+
+
+def encrypt_secret(data):
+    return secret_box().encrypt(json.dumps(data).encode()).decode()
+
+
+def decrypt_secret(value):
+    try: return json.loads(secret_box().decrypt(value.encode()).decode())
+    except InvalidToken as error: raise RuntimeError("DNS provider credentials cannot be decrypted") from error
+
+
+def send_notification(channel, subject, message):
+    config = decrypt_secret(channel["config_data"])
+    kind = channel["channel_type"]
+    if kind == "smtp":
+        mail = EmailMessage(); mail["Subject"] = subject; mail["From"] = config["from_email"]; mail["To"] = config["to_email"]; mail.set_content(message)
+        context = ssl.create_default_context()
+        if config.get("security", "starttls") == "ssl":
+            client = smtplib.SMTP_SSL(config["host"], int(config.get("port", 465)), timeout=15, context=context)
+        else:
+            client = smtplib.SMTP(config["host"], int(config.get("port", 587)), timeout=15)
+            if config.get("security", "starttls") == "starttls": client.starttls(context=context)
+        try:
+            if config.get("username"): client.login(config["username"], config.get("password", ""))
+            client.send_message(mail)
+        finally: client.quit()
+    elif kind == "telegram":
+        url = f"https://api.telegram.org/bot{config['bot_token']}/sendMessage"
+        payload = json.dumps({"chat_id": config["chat_id"], "text": f"{subject}\n\n{message}", "disable_web_page_preview": True}).encode()
+        with urllib.request.urlopen(urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}), timeout=15) as response:
+            if response.status >= 300: raise RuntimeError(f"Telegram returned HTTP {response.status}")
+    else:
+        version = config.get("api_version", "v23.0")
+        url = f"https://graph.facebook.com/{version}/{config['phone_number_id']}/messages"
+        payload = json.dumps({"messaging_product": "whatsapp", "to": config["recipient"], "type": "text", "text": {"body": f"{subject}\n\n{message}"}}).encode()
+        request = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json", "Authorization": f"Bearer {config['access_token']}"})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            if response.status >= 300: raise RuntimeError(f"WhatsApp returned HTTP {response.status}")
+
+
+def dispatch_notification(event, subject, message):
+    with connect() as db: channels = db.execute("SELECT * FROM notification_channels WHERE enabled=1").fetchall()
+    for channel in channels:
+        if event not in json.loads(channel["events"]): continue
+        def deliver(item=channel):
+            try: send_notification(item, subject, message)
+            except Exception as error: print(f"notification {item['name']}:", error)
+        threading.Thread(target=deliver, daemon=True).start()
+
+
+def valid_address(address, family):
+    if family in ("IPv4", "IPv6"):
+        try:
+            return ipaddress.ip_address(address).version == (4 if family == "IPv4" else 6)
+        except ValueError:
+            return False
+    return bool(re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,252}$", address))
+
+
+def nginx_name(domain):
+    return "relay_" + re.sub(r"[^a-zA-Z0-9]", "_", domain)
+
+
+def generate_nginx():
+    with connect() as db:
+        proxies = db.execute("SELECT * FROM proxy_hosts WHERE enabled=1 ORDER BY domain").fetchall()
+        redirects = db.execute("SELECT * FROM redirects WHERE enabled=1 ORDER BY domain").fetchall()
+        streams = db.execute("SELECT * FROM streams WHERE enabled=1 ORDER BY listen_port").fetchall()
+        http_parts = ["# Generated by ProxyDeck. Do not edit.\n"]
+        for proxy in proxies:
+            targets = db.execute("SELECT * FROM upstreams WHERE proxy_id=? AND mode!='off' ORDER BY id", (proxy["id"],)).fetchall()
+            if not targets:
+                continue
+            name = nginx_name(proxy["domain"])
+            balance = "" if proxy["strategy"] == "round_robin" else f"    {proxy['strategy']};\n"
+            servers = []
+            for target in targets:
+                host = f"[{target['address']}]" if target["family"] == "IPv6" else target["address"]
+                backup = " backup" if target["mode"] == "backup" else ""
+                servers.append(f"    server {host}:{proxy['port']} weight={target['weight']}{backup} max_fails=3 fail_timeout=30s;")
+            http_parts.append(f"upstream {name} {{\n{balance}{chr(10).join(servers)}\n    keepalive 32;\n}}\n")
+            ssl = bool(proxy["ssl_enabled"])
+            listen = "    listen 443 ssl;\n    listen [::]:443 ssl;" if ssl else "    listen 80;\n    listen [::]:80;"
+            cert = f"\n    ssl_certificate /etc/letsencrypt/live/{proxy['domain']}/fullchain.pem;\n    ssl_certificate_key /etc/letsencrypt/live/{proxy['domain']}/privkey.pem;" if ssl else ""
+            websocket = "\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection $connection_upgrade;" if proxy["websocket"] else ""
+            http_parts.append(f"""server {{
+{listen}{cert}
+    server_name {proxy['domain']};
+    location ^~ /.well-known/acme-challenge/ {{ root /var/www/acme; }}
+    location / {{
+        proxy_pass {proxy['scheme']}://{name};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;{websocket}
+    }}
+}}
+""")
+        for redirect in redirects:
+            http_parts.append(f"server {{ listen 80; listen [::]:80; server_name {redirect['domain']}; return {redirect['code']} {redirect['target']}$request_uri; }}\n")
+        stream_parts = ["# Generated stream routes\n"]
+        for stream in streams:
+            udp = " udp" if stream["protocol"] == "udp" else ""
+            stream_parts.append(f"server {{ listen {stream['listen_port']}{udp}; listen [::]:{stream['listen_port']}{udp}; proxy_pass {stream['target_host']}:{stream['target_port']}; }}\n")
+    for filename, content in (("proxydeck-http.conf", "\n".join(http_parts)), ("proxydeck-stream.conf", "\n".join(stream_parts))):
+        temp = GENERATED / (filename + ".tmp")
+        temp.write_text(content, encoding="utf-8")
+        os.replace(temp, GENERATED / filename)
+
+
+def health_loop():
+    while True:
+        try:
+            changes = []
+            with connect() as db:
+                targets = db.execute("SELECT u.*,p.scheme,p.port FROM upstreams u JOIN proxy_hosts p ON p.id=u.proxy_id WHERE p.enabled=1 AND u.mode!='off'").fetchall()
+                for target in targets:
+                    started = time.monotonic()
+                    healthy = 0
+                    try:
+                        host = f"[{target['address']}]" if target["family"] == "IPv6" else target["address"]
+                        url = f"{target['scheme']}://{host}:{target['port']}{target['health_path']}"
+                        req = urllib.request.Request(url, method="GET", headers={"User-Agent": "ProxyDeck-Health/1.0"})
+                        with urllib.request.urlopen(req, timeout=4) as response:
+                            healthy = 1 if response.status < 500 else 0
+                    except Exception:
+                        healthy = 0
+                    latency = int((time.monotonic() - started) * 1000)
+                    db.execute("UPDATE upstreams SET healthy=?,latency_ms=?,checked_at=? WHERE id=?", (healthy, latency, int(time.time()), target["id"]))
+                    if target["healthy"] is not None and int(target["healthy"]) != healthy:
+                        changes.append(("up" if healthy else "down", target["address"], latency))
+                db.commit()
+            for event, address, latency in changes:
+                state = "wieder erreichbar" if event == "up" else "nicht erreichbar"
+                dispatch_notification(event, f"ProxyDeck: Upstream {state}", f"Ziel: {address}\nStatus: {state}\nLatenz: {latency} ms")
+        except Exception as error:
+            print("healthcheck:", error)
+        time.sleep(30)
+
+
+def renewal_loop():
+    while True:
+        time.sleep(12 * 60 * 60)
+        try:
+            result = subprocess.run(["certbot", "renew", "--non-interactive", "--quiet"], capture_output=True, text=True, timeout=600)
+            acme_result = subprocess.run(["/opt/acme.sh-3.1.2/acme.sh", "--home", "/data/acme-sh", "--cron"], capture_output=True, text=True, timeout=600)
+            if result.returncode == 0 and acme_result.returncode == 0:
+                generate_nginx()  # atomic rewrite triggers the gateway's validated reload
+            else:
+                print("acme renewal:", ((result.stderr or result.stdout) + (acme_result.stderr or acme_result.stdout))[-1000:])
+        except Exception as error:
+            print("acme renewal:", error)
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    server_version = "ProxyDeck/0.2"
+
+    def json_body(self):
+        length = int(self.headers.get("content-length", "0"))
+        if length > 1_000_000:
+            raise ValueError("body too large")
+        return json.loads(self.rfile.read(length) or b"{}")
+
+    def send_json(self, status, payload, headers=None):
+        body = json.dumps(payload, ensure_ascii=False).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        for key, value in (headers or {}).items(): self.send_header(key, value)
+        self.end_headers(); self.wfile.write(body)
+
+    def session(self):
+        cookie = http.cookies.SimpleCookie(self.headers.get("cookie"))
+        token = cookie.get("proxydeck_session")
+        if not token: return None
+        token_hash = hashlib.sha256(token.value.encode()).hexdigest()
+        with connect() as db:
+            row = db.execute("SELECT s.csrf,s.expires_at,u.id,u.username,u.role,u.enabled FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?", (token_hash,)).fetchone()
+        if not row or not row["enabled"] or row["expires_at"] < time.time(): return None
+        return rowdict(row)
+
+    def require(self, roles=("admin", "operator", "viewer"), csrf=False):
+        session = self.session()
+        if not session or session["role"] not in roles:
+            self.send_json(401 if not session else 403, {"error": "Nicht autorisiert"}); return None
+        if csrf and not hmac.compare_digest(self.headers.get("x-csrf-token", ""), session["csrf"]):
+            self.send_json(403, {"error": "Ungültiges CSRF-Token"}); return None
+        return session
+
+    def audit(self, user_id, action, detail=""):
+        with connect() as db: db.execute("INSERT INTO audit_log(user_id,action,detail,created_at) VALUES(?,?,?,?)", (user_id, action, detail[:1000], int(time.time())))
+
+    def do_GET(self):
+        path = urllib.parse.urlparse(self.path).path
+        if path == "/api/session":
+            session = self.require()
+            if session: self.send_json(200, {"user": {"id": session["id"], "username": session["username"], "role": session["role"]}, "csrf": session["csrf"]})
+            return
+        if path == "/api/proxy-hosts":
+            if not self.require(): return
+            with connect() as db:
+                items = []
+                for row in db.execute("SELECT * FROM proxy_hosts ORDER BY domain"):
+                    item = rowdict(row); item["targets"] = [rowdict(x) for x in db.execute("SELECT * FROM upstreams WHERE proxy_id=? ORDER BY id", (row["id"],))]; items.append(item)
+            self.send_json(200, {"items": items}); return
+        if path in ("/api/users", "/api/redirects", "/api/streams", "/api/certificates", "/api/acme-providers", "/api/notifications", "/api/audit"):
+            if not self.require(("admin",) if path in ("/api/users", "/api/acme-providers", "/api/notifications") else ("admin", "operator", "viewer")): return
+            table = path.rsplit("/", 1)[1]
+            table = "audit_log" if table == "audit" else table
+            table = "acme_providers" if table == "acme-providers" else table
+            table = "notification_channels" if table == "notifications" else table
+            with connect() as db:
+                columns = "id,username,role,enabled,created_at" if table == "users" else "*"
+                rows = [rowdict(x) for x in db.execute(f"SELECT {columns} FROM {table} ORDER BY id DESC LIMIT 250")]
+            if table == "acme_providers":
+                for item in rows: item.pop("secret_data", None); item["configured"] = True
+            if table == "notification_channels":
+                for item in rows: item.pop("config_data", None); item["events"] = json.loads(item["events"]); item["configured"] = True
+            self.send_json(200, {"items": rows}); return
+        self.serve_file(path)
+
+    def do_POST(self):
+        path = urllib.parse.urlparse(self.path).path
+        try: body = self.json_body()
+        except Exception: self.send_json(400, {"error": "Ungültige Anfrage"}); return
+        if path == "/api/login":
+            with connect() as db: user = db.execute("SELECT * FROM users WHERE username=? AND enabled=1", (body.get("username", ""),)).fetchone()
+            if not user or not password_ok(body.get("password", ""), user["password_hash"]):
+                time.sleep(.35); self.send_json(401, {"error": "Benutzername oder Passwort falsch"}); return
+            token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(24)
+            with connect() as db: db.execute("INSERT INTO sessions(token_hash,user_id,csrf,expires_at) VALUES(?,?,?,?)", (hashlib.sha256(token.encode()).hexdigest(), user["id"], csrf, int(time.time()) + SESSION_TTL))
+            secure = "; Secure" if os.environ.get("PROXYDECK_SECURE_COOKIE", "0") == "1" else ""
+            self.send_json(200, {"user": {"username": user["username"], "role": user["role"]}, "csrf": csrf}, {"Set-Cookie": f"proxydeck_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}{secure}"}); return
+        session = self.require(("admin", "operator"), csrf=True)
+        if not session: return
+        if path == "/api/logout":
+            cookie = http.cookies.SimpleCookie(self.headers.get("cookie")); token = cookie.get("proxydeck_session")
+            if token:
+                with connect() as db: db.execute("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.value.encode()).hexdigest(),))
+            self.send_json(200, {"ok": True}, {"Set-Cookie": "proxydeck_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"}); return
+        if path == "/api/proxy-hosts":
+            try:
+                domain = body["domain"].lower().strip(); port = int(body["port"]); targets = body["targets"]
+                if not HOST_RE.match(domain) or not 0 < port < 65536 or not targets: raise ValueError()
+                for target in targets:
+                    if not valid_address(target["address"], target["family"]): raise ValueError()
+                with connect() as db:
+                    host_id = body.get("id")
+                    values = (domain, body.get("scheme", "http"), port, int(bool(body.get("websocket", True))), body.get("strategy", "least_conn"), int(bool(body.get("ssl_enabled", False))), int(bool(body.get("enabled", True))))
+                    if host_id:
+                        db.execute("UPDATE proxy_hosts SET domain=?,scheme=?,port=?,websocket=?,strategy=?,ssl_enabled=?,enabled=? WHERE id=?", values + (host_id,)); db.execute("DELETE FROM upstreams WHERE proxy_id=?", (host_id,))
+                    else:
+                        cur = db.execute("INSERT INTO proxy_hosts(domain,scheme,port,websocket,strategy,ssl_enabled,enabled,created_at) VALUES(?,?,?,?,?,?,?,?)", values + (int(time.time()),)); host_id = cur.lastrowid
+                    for target in targets: db.execute("INSERT INTO upstreams(proxy_id,address,family,weight,mode,health_path) VALUES(?,?,?,?,?,?)", (host_id, target["address"], target["family"], max(1, min(100, int(target.get("weight", 100)))), target.get("mode", "active").lower(), target.get("health_path", "/")))
+                generate_nginx(); self.audit(session["id"], "proxy.save", domain); self.send_json(200, {"ok": True, "id": host_id})
+            except (ValueError, KeyError, sqlite3.IntegrityError) as error: self.send_json(400, {"error": "Domain, Port oder Zieladresse ist ungültig oder bereits vorhanden"})
+            return
+        if path == "/api/users":
+            if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
+            try:
+                if len(body["password"]) < 12 or body["role"] not in ("admin", "operator", "viewer"): raise ValueError()
+                with connect() as db: cur = db.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)", (body["username"].strip(), password_hash(body["password"]), body["role"], int(time.time())))
+                self.audit(session["id"], "user.create", body["username"]); self.send_json(201, {"id": cur.lastrowid})
+            except (ValueError, KeyError, sqlite3.IntegrityError): self.send_json(400, {"error": "Ungültiger oder vorhandener Benutzer; Passwort mindestens 12 Zeichen"})
+            return
+        if path == "/api/acme-providers":
+            if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
+            provider = body.get("provider", "").lower(); name = body.get("name", "").strip(); credentials = body.get("credentials", {})
+            required = {"cloudflare": ("api_token",), "digitalocean": ("token",), "route53": ("access_key_id", "secret_access_key"), "ionos": ("api_token",), "hetzner": ("api_token",), "ipv64": ("api_token",), "strato": ("username", "password"), "powerdns": ("api_url", "server_id", "api_token")}
+            try:
+                with connect() as db: current_user = db.execute("SELECT password_hash FROM users WHERE id=?", (session["id"],)).fetchone()
+                if not current_user or not password_ok(body.get("current_password", ""), current_user["password_hash"]):
+                    self.send_json(403, {"error": "Das aktuelle Passwort ist nicht korrekt"}); return
+                if provider not in required or not name or any(not credentials.get(key) for key in required[provider]): raise ValueError()
+                encrypted = encrypt_secret({key: credentials[key] for key in required[provider]})
+                provider_id = body.get("id")
+                with connect() as db:
+                    if provider_id:
+                        changed = db.execute("UPDATE acme_providers SET name=?,provider=?,secret_data=? WHERE id=?", (name, provider, encrypted, int(provider_id))).rowcount
+                        if not changed: raise ValueError()
+                        result_id = int(provider_id)
+                    else:
+                        cur = db.execute("INSERT INTO acme_providers(name,provider,secret_data,created_at) VALUES(?,?,?,?)", (name, provider, encrypted, int(time.time()))); result_id = cur.lastrowid
+                action = "acme_provider.rotate" if provider_id else "acme_provider.create"
+                self.audit(session["id"], action, f"{name}:{provider}"); self.send_json(200 if provider_id else 201, {"id": result_id})
+            except (ValueError, KeyError, sqlite3.IntegrityError, RuntimeError) as error: self.send_json(400, {"error": str(error) if isinstance(error, RuntimeError) else "DNS-Anbieter ungültig oder bereits vorhanden"})
+            return
+        if path == "/api/notifications":
+            if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
+            channel_type, name, config = body.get("channel_type", ""), body.get("name", "").strip(), body.get("config", {})
+            required = {"smtp": ("host", "from_email", "to_email"), "telegram": ("bot_token", "chat_id"), "whatsapp": ("access_token", "phone_number_id", "recipient")}
+            try:
+                with connect() as db: current_user = db.execute("SELECT password_hash FROM users WHERE id=?", (session["id"],)).fetchone()
+                if not current_user or not password_ok(body.get("current_password", ""), current_user["password_hash"]): self.send_json(403, {"error": "Das aktuelle Passwort ist nicht korrekt"}); return
+                if channel_type not in required or not name or any(not config.get(key) for key in required[channel_type]): raise ValueError()
+                events = [item for item in body.get("events", ["down", "up", "certificate"]) if item in ("down", "up", "certificate")]
+                encrypted = encrypt_secret(config); channel_id = body.get("id")
+                with connect() as db:
+                    if channel_id:
+                        if not db.execute("UPDATE notification_channels SET name=?,channel_type=?,config_data=?,events=?,enabled=? WHERE id=?", (name, channel_type, encrypted, json.dumps(events), int(bool(body.get("enabled", True))), int(channel_id))).rowcount: raise ValueError()
+                        result_id = int(channel_id)
+                    else:
+                        cur = db.execute("INSERT INTO notification_channels(name,channel_type,config_data,events,enabled,created_at) VALUES(?,?,?,?,?,?)", (name, channel_type, encrypted, json.dumps(events), int(bool(body.get("enabled", True))), int(time.time()))); result_id = cur.lastrowid
+                self.audit(session["id"], "notification.save", f"{name}:{channel_type}"); self.send_json(200 if channel_id else 201, {"id": result_id})
+            except (ValueError, sqlite3.IntegrityError, RuntimeError) as error: self.send_json(400, {"error": str(error) if isinstance(error, RuntimeError) else "Benachrichtigungskanal ungültig oder bereits vorhanden"})
+            return
+        if path == "/api/notifications/test":
+            if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
+            with connect() as db:
+                current_user = db.execute("SELECT password_hash FROM users WHERE id=?", (session["id"],)).fetchone(); channel = db.execute("SELECT * FROM notification_channels WHERE id=?", (body.get("id"),)).fetchone()
+            if not current_user or not password_ok(body.get("current_password", ""), current_user["password_hash"]): self.send_json(403, {"error": "Das aktuelle Passwort ist nicht korrekt"}); return
+            if not channel: self.send_json(404, {"error": "Kanal nicht gefunden"}); return
+            try: send_notification(channel, "ProxyDeck Testnachricht", "Der Benachrichtigungskanal funktioniert."); self.audit(session["id"], "notification.test", channel["name"]); self.send_json(200, {"ok": True})
+            except Exception as error: self.send_json(502, {"error": f"Versand fehlgeschlagen: {error}"})
+            return
+        if path == "/api/redirects":
+            try:
+                domain, target, code = body["domain"].lower().strip(), body["target"].strip(), int(body.get("code", 301))
+                if not HOST_RE.match(domain) or not target.startswith(("http://", "https://")) or code not in (301, 302, 307, 308): raise ValueError()
+                with connect() as db: cur = db.execute("INSERT INTO redirects(domain,target,code,enabled) VALUES(?,?,?,1)", (domain, target, code))
+                generate_nginx(); self.audit(session["id"], "redirect.create", domain); self.send_json(201, {"id": cur.lastrowid})
+            except (ValueError, KeyError, sqlite3.IntegrityError): self.send_json(400, {"error": "Weiterleitung ungültig oder bereits vorhanden"})
+            return
+        if path == "/api/streams":
+            try:
+                listen_port, target_port = int(body["listen_port"]), int(body["target_port"]); protocol = body.get("protocol", "tcp").lower(); target = body["target_host"].strip()
+                if protocol not in ("tcp", "udp") or not 0 < listen_port < 65536 or not 0 < target_port < 65536 or not valid_address(target, body.get("family", "Hostname")): raise ValueError()
+                with connect() as db: cur = db.execute("INSERT INTO streams(listen_port,protocol,target_host,target_port,enabled) VALUES(?,?,?,?,1)", (listen_port, protocol, target, target_port))
+                generate_nginx(); self.audit(session["id"], "stream.create", f"{protocol}:{listen_port}"); self.send_json(201, {"id": cur.lastrowid})
+            except (ValueError, KeyError, sqlite3.IntegrityError): self.send_json(400, {"error": "Stream ungültig oder Port bereits vergeben"})
+            return
+        if path == "/api/certificates/request":
+            if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
+            domain, email = body.get("domain", ""), body.get("email", "")
+            if not HOST_RE.match(domain) or "@" not in email: self.send_json(400, {"error": "Domain oder E-Mail ungültig"}); return
+            challenge, provider_id = body.get("challenge", "http-01"), body.get("provider_id")
+            if challenge not in ("http-01", "dns-01") or challenge == "dns-01" and not provider_id: self.send_json(400, {"error": "Für DNS-01 muss ein DNS-Anbieter gewählt werden"}); return
+            threading.Thread(target=self.request_certificate, args=(domain, email, session["id"], challenge, provider_id), daemon=True).start()
+            self.send_json(202, {"status": "ACME-Anforderung gestartet"}); return
+        if path == "/api/apply":
+            generate_nginx(); self.audit(session["id"], "nginx.apply"); self.send_json(200, {"ok": True, "message": "Konfiguration atomar geschrieben; Nginx-Watcher prüft und lädt neu."}); return
+        self.send_json(404, {"error": "Nicht gefunden"})
+
+    def request_certificate(self, domain, email, user_id, challenge="http-01", provider_id=None):
+        with connect() as db: db.execute("INSERT INTO certificates(domain,email,status,challenge,provider_id,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(domain) DO UPDATE SET email=excluded.email,status='requesting',challenge=excluded.challenge,provider_id=excluded.provider_id,last_error=NULL", (domain, email, "requesting", challenge, provider_id, int(time.time())))
+        command = ["certbot", "certonly", "-d", domain, "--email", email, "--agree-tos", "--non-interactive", "--keep-until-expiring"]
+        environment = os.environ.copy(); credentials_file = None
+        if challenge == "http-01": command += ["--webroot", "-w", str(ACME_WEBROOT)]
+        else:
+            with connect() as db: provider = db.execute("SELECT * FROM acme_providers WHERE id=?", (provider_id,)).fetchone()
+            if not provider:
+                with connect() as db: db.execute("UPDATE certificates SET status='failed',last_error='DNS provider not found' WHERE domain=?", (domain,))
+                return
+            try: credentials = decrypt_secret(provider["secret_data"])
+            except RuntimeError as error:
+                with connect() as db: db.execute("UPDATE certificates SET status='failed',last_error=? WHERE domain=?", (str(error), domain))
+                return
+            if provider["provider"] == "cloudflare":
+                credentials_file = DATA / f"acme-{secrets.token_hex(8)}.ini"; credentials_file.write_text(f"dns_cloudflare_api_token = {credentials['api_token']}\n", encoding="utf-8"); os.chmod(credentials_file, 0o600)
+                command += ["--dns-cloudflare", "--dns-cloudflare-credentials", str(credentials_file), "--dns-cloudflare-propagation-seconds", "30"]
+            elif provider["provider"] == "digitalocean":
+                credentials_file = DATA / f"acme-{secrets.token_hex(8)}.ini"; credentials_file.write_text(f"dns_digitalocean_token = {credentials['token']}\n", encoding="utf-8"); os.chmod(credentials_file, 0o600)
+                command += ["--dns-digitalocean", "--dns-digitalocean-credentials", str(credentials_file), "--dns-digitalocean-propagation-seconds", "30"]
+            elif provider["provider"] == "route53":
+                environment["AWS_ACCESS_KEY_ID"] = credentials["access_key_id"]; environment["AWS_SECRET_ACCESS_KEY"] = credentials["secret_access_key"]
+                command += ["--dns-route53"]
+            else:
+                acme_plugins = {
+                    "ionos": ("dns_ionos_cloud", {"IONOS_TOKEN": credentials["api_token"]}),
+                    "hetzner": ("dns_hetzner", {"HETZNER_Token": credentials["api_token"]}),
+                    "ipv64": ("dns_ipv64", {"IPv64_Token": credentials["api_token"]}),
+                    "strato": ("dns_strato", {"STRATO_Username": credentials["username"], "STRATO_Password": credentials["password"]}),
+                    "powerdns": ("dns_pdns", {"PDNS_Url": credentials["api_url"], "PDNS_ServerId": credentials["server_id"], "PDNS_Token": credentials["api_token"], "PDNS_Ttl": str(credentials.get("ttl", 60))})
+                }
+                dns_hook, plugin_env = acme_plugins[provider["provider"]]; environment.update(plugin_env)
+                cert_dir = Path("/etc/letsencrypt/live") / domain; cert_dir.mkdir(parents=True, exist_ok=True)
+                command = ["/opt/acme.sh-3.1.2/acme.sh", "--home", "/data/acme-sh", "--server", "letsencrypt", "--issue", "--dns", dns_hook, "-d", domain, "--accountemail", email]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=300, env=environment)
+            status, error = ("issued", None) if result.returncode == 0 else ("failed", (result.stderr or result.stdout)[-2000:])
+            if status == "issued" and challenge == "dns-01" and provider["provider"] in ("ionos", "hetzner", "ipv64", "strato", "powerdns"):
+                install = subprocess.run(["/opt/acme.sh-3.1.2/acme.sh", "--home", "/data/acme-sh", "--install-cert", "-d", domain, "--key-file", str(cert_dir / "privkey.pem"), "--fullchain-file", str(cert_dir / "fullchain.pem")], capture_output=True, text=True, timeout=120, env=environment)
+                if install.returncode != 0: status, error = "failed", (install.stderr or install.stdout)[-2000:]
+        except Exception as exc: status, error = "failed", str(exc)
+        finally:
+            if credentials_file: credentials_file.unlink(missing_ok=True)
+        with connect() as db: db.execute("UPDATE certificates SET status=?,last_error=? WHERE domain=?", (status, error, domain))
+        self.audit(user_id, "certificate." + status, domain)
+        if status == "failed": dispatch_notification("certificate", "ProxyDeck: Zertifikatsfehler", f"Domain: {domain}\nFehler: {error or 'Unbekannter ACME-Fehler'}")
+
+    def serve_file(self, url_path):
+        requested = "/index.html" if url_path == "/" else url_path
+        file = (PUBLIC / requested.lstrip("/")).resolve()
+        if PUBLIC.resolve() not in file.parents:
+            self.send_error(403); return
+        try: data = file.read_bytes()
+        except OSError: self.send_error(404); return
+        self.send_response(200); self.send_header("Content-Type", MIME.get(file.suffix, "application/octet-stream")); self.send_header("Content-Length", str(len(data))); self.send_header("X-Frame-Options", "DENY"); self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:"); self.end_headers(); self.wfile.write(data)
+
+    def log_message(self, fmt, *args): print(time.strftime("%Y-%m-%d %H:%M:%S"), self.address_string(), fmt % args)
+
+
+if __name__ == "__main__":
+    init_db(); generate_nginx()
+    threading.Thread(target=health_loop, daemon=True).start()
+    threading.Thread(target=renewal_loop, daemon=True).start()
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    print(f"ProxyDeck API listening on :{PORT}")
+    server.serve_forever()
