@@ -28,6 +28,7 @@ DATA = Path(os.environ.get("PROXYDECK_DATA", ROOT / "data"))
 GENERATED = Path(os.environ.get("PROXYDECK_CONFIG", ROOT / "generated"))
 ACME_WEBROOT = Path(os.environ.get("PROXYDECK_ACME_WEBROOT", ROOT / "acme-webroot"))
 DB = DATA / "proxydeck.db"
+ACCESS_LOG = Path(os.environ.get("PROXYDECK_ACCESS_LOG", "/logs/access.log"))
 PORT = int(os.environ.get("PORT", "3000"))
 SESSION_TTL = 60 * 60 * 12
 HOST_RE = re.compile(r"^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$")
@@ -74,6 +75,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS notification_channels(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, channel_type TEXT NOT NULL CHECK(channel_type IN ('smtp','telegram','whatsapp')), config_data TEXT NOT NULL, events TEXT NOT NULL DEFAULT '["down","up","certificate"]', enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS traffic_hourly(domain TEXT NOT NULL, bucket INTEGER NOT NULL, hits INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL DEFAULT 0, total_time REAL NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(domain,bucket));
         """)
         cert_columns = {row[1] for row in db.execute("PRAGMA table_info(certificates)")}
         if "challenge" not in cert_columns: db.execute("ALTER TABLE certificates ADD COLUMN challenge TEXT NOT NULL DEFAULT 'http-01'")
@@ -250,6 +252,37 @@ def renewal_loop():
             print("acme renewal:", error)
 
 
+def traffic_loop():
+    """Incrementally aggregate the shared Nginx JSON access log into hourly SQLite rows."""
+    while True:
+        try:
+            if not ACCESS_LOG.exists(): time.sleep(5); continue
+            with connect() as db:
+                saved = db.execute("SELECT value FROM settings WHERE key='traffic_offset'").fetchone()
+                offset = int(saved["value"]) if saved else 0
+            size = ACCESS_LOG.stat().st_size
+            if offset > size: offset = 0
+            rows = {}
+            with ACCESS_LOG.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(offset)
+                for line in handle:
+                    try:
+                        item = json.loads(line); domain = str(item.get("host", "unknown"))[:253]
+                        timestamp = int(float(item.get("ts", time.time()))); bucket = timestamp - timestamp % 3600
+                        key = (domain, bucket); current = rows.setdefault(key, [0, 0, 0.0, 0]); current[0] += 1
+                        current[1] += max(0, int(item.get("bytes", 0))); current[2] += max(0.0, float(item.get("time", 0)))
+                        current[3] += int(int(item.get("status", 0)) >= 400)
+                    except (ValueError, TypeError, json.JSONDecodeError): pass
+                offset = handle.tell()
+            with connect() as db:
+                for (domain, bucket), values in rows.items():
+                    db.execute("INSERT INTO traffic_hourly(domain,bucket,hits,bytes,total_time,errors) VALUES(?,?,?,?,?,?) ON CONFLICT(domain,bucket) DO UPDATE SET hits=hits+excluded.hits,bytes=bytes+excluded.bytes,total_time=total_time+excluded.total_time,errors=errors+excluded.errors", (domain, bucket, *values))
+                db.execute("INSERT INTO settings(key,value) VALUES('traffic_offset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(offset),))
+                db.execute("DELETE FROM traffic_hourly WHERE bucket<?", (int(time.time()) - 90 * 86400,))
+        except Exception as error: print("traffic:", error)
+        time.sleep(5)
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     server_version = "ProxyDeck/0.2"
 
@@ -293,8 +326,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/branding":
-            with connect() as db: settings = {row["key"]: row["value"] for row in db.execute("SELECT key,value FROM settings WHERE key IN ('accent','logo','favicon')")}
-            self.send_json(200, {"accent": settings.get("accent", "#1ca471"), "logo": settings.get("logo", ""), "favicon": settings.get("favicon", "")}); return
+            with connect() as db: settings = {row["key"]: row["value"] for row in db.execute("SELECT key,value FROM settings WHERE key IN ('accent','background','logo','favicon')")}
+            self.send_json(200, {"accent": settings.get("accent", "#1ca471"), "background": settings.get("background", "#f4f6f5"), "logo": settings.get("logo", ""), "favicon": settings.get("favicon", "")}); return
         if path == "/api/session":
             session = self.require()
             if session: self.send_json(200, {"user": {"id": session["id"], "username": session["username"], "role": session["role"]}, "csrf": session["csrf"]})
@@ -306,6 +339,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 for row in db.execute("SELECT * FROM proxy_hosts ORDER BY domain"):
                     item = rowdict(row); item["targets"] = [rowdict(x) for x in db.execute("SELECT * FROM upstreams WHERE proxy_id=? ORDER BY id", (row["id"],))]; items.append(item)
             self.send_json(200, {"items": items}); return
+        if path == "/api/traffic":
+            if not self.require(): return
+            try: hours = max(1, min(2160, int(urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("hours", [24])[0])))
+            except ValueError: hours = 24
+            since = int(time.time()) - hours * 3600
+            with connect() as db:
+                timeline = [rowdict(row) for row in db.execute("SELECT bucket,SUM(hits) hits,SUM(bytes) bytes,SUM(total_time) total_time,SUM(errors) errors FROM traffic_hourly WHERE bucket>=? GROUP BY bucket ORDER BY bucket", (since,))]
+                hosts = [rowdict(row) for row in db.execute("SELECT domain,SUM(hits) hits,SUM(bytes) bytes,SUM(total_time) total_time,SUM(errors) errors FROM traffic_hourly WHERE bucket>=? GROUP BY domain ORDER BY hits DESC", (since,))]
+            totals = {"hits": sum(x["hits"] for x in timeline), "bytes": sum(x["bytes"] for x in timeline), "errors": sum(x["errors"] for x in timeline), "average_ms": round(1000 * sum(x["total_time"] for x in timeline) / max(1, sum(x["hits"] for x in timeline)), 1)}
+            for item in timeline + hosts: item["average_ms"] = round(1000 * item.pop("total_time") / max(1, item["hits"]), 1)
+            self.send_json(200, {"hours": hours, "totals": totals, "timeline": timeline, "hosts": hosts}); return
         if path in ("/api/users", "/api/redirects", "/api/streams", "/api/certificates", "/api/acme-providers", "/api/notifications", "/api/audit"):
             if not self.require(("admin",) if path in ("/api/users", "/api/acme-providers", "/api/notifications") else ("admin", "operator", "viewer")): return
             table = path.rsplit("/", 1)[1]
@@ -353,12 +397,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_json(200, {"ok": True}, {"Set-Cookie": "proxydeck_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"}); return
         if path == "/api/branding":
             if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
-            accent, logo, favicon = body.get("accent", ""), body.get("logo", ""), body.get("favicon", "")
+            accent, background, logo, favicon = body.get("accent", ""), body.get("background", ""), body.get("logo", ""), body.get("favicon", "")
             image_re = re.compile(r"^data:image/(?:png|jpeg|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/=]+$")
-            if not re.fullmatch(r"#[0-9a-fA-F]{6}", accent) or any(value and (len(value) > 700_000 or not image_re.fullmatch(value)) for value in (logo, favicon)):
+            if any(not re.fullmatch(r"#[0-9a-fA-F]{6}", color) for color in (accent, background)) or any(value and (len(value) > 700_000 or not image_re.fullmatch(value)) for value in (logo, favicon)):
                 self.send_json(400, {"error": "Farbe oder Bilddatei ungültig (PNG/JPG/ICO, maximal 500 KB)"}); return
             with connect() as db:
-                for key, value in (("accent", accent.lower()), ("logo", logo), ("favicon", favicon)):
+                for key, value in (("accent", accent.lower()), ("background", background.lower()), ("logo", logo), ("favicon", favicon)):
                     db.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
             self.audit(session["id"], "branding.update", accent.lower()); self.send_json(200, {"ok": True}); return
         if path == "/api/proxy-hosts":
@@ -527,6 +571,7 @@ if __name__ == "__main__":
     init_db(); generate_nginx()
     threading.Thread(target=health_loop, daemon=True).start()
     threading.Thread(target=renewal_loop, daemon=True).start()
+    threading.Thread(target=traffic_loop, daemon=True).start()
     server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"ProxyDeck API listening on :{PORT}")
     server.serve_forever()

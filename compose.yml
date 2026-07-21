@@ -14,6 +14,7 @@ services:
       - generated_config:/generated
       - letsencrypt:/etc/letsencrypt
       - acme_webroot:/var/www/acme
+      - traffic_logs:/logs:ro
     networks: [edge]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/', timeout=2)"]
@@ -34,6 +35,7 @@ services:
       - generated_config:/etc/nginx/proxydeck:ro
       - letsencrypt:/etc/letsencrypt:ro
       - acme_webroot:/var/www/acme:ro
+      - traffic_logs:/logs
     networks: [edge]
     depends_on:
       control: { condition: service_healthy }
@@ -55,3 +57,4 @@ volumes:
   generated_config:
   letsencrypt:
   acme_webroot:
+  traffic_logs:

@@ -9,7 +9,7 @@
 <body>
   <div class="shell">
     <aside class="sidebar">
-      <button class="brand" data-page="dashboard"><span class="logo">P</span><strong>proxydeck</strong><em>DEMO</em></button>
+      <button class="brand" data-page="dashboard"><span class="logo">P</span><img class="demo-custom-logo" alt="" hidden><strong>proxydeck</strong><em>DEMO</em></button>
       <nav id="nav">
         <button class="active" data-page="dashboard"><span>⌂</span>Übersicht</button>
         <button data-page="proxies"><span>⇄</span>Proxy Hosts <b id="proxyBadge">3</b></button>
@@ -21,6 +21,8 @@
         <button data-page="users"><span>♙</span>Benutzer</button>
         <button data-page="notifications"><span>♢</span>Benachrichtigungen</button>
         <button data-page="activity"><span>▤</span>Aktivitäten</button>
+        <button data-page="traffic"><span>↗</span>Traffic &amp; Hits</button>
+        <button data-page="design"><span>⚙</span>Design</button>
       </nav>
       <div class="side-bottom">
         <div class="gateway"><i></i><div><strong>Gateway online</strong><small>IPv4 + IPv6 aktiv</small></div></div>
@@ -36,7 +38,7 @@
 
   <dialog id="modal"><form method="dialog" class="modal-card"><div class="modal-head"><div><h2 id="modalTitle"></h2><p id="modalSubtitle"></p></div><button value="cancel">×</button></div><div class="modal-body" id="modalBody"></div><div class="modal-actions"><button value="cancel" class="btn secondary">Abbrechen</button><button type="button" class="btn primary" id="modalSave">Speichern</button></div></form></dialog>
   <div class="toast" id="toast"><span>✓</span><div><strong></strong><small></small></div></div>
-  <div class="login" id="login"><form id="loginForm"><div class="login-book" aria-hidden="true"><span class="book-back"></span><span class="book-pages"></span><span class="book-cover"><i class="logo">P</i></span></div><div class="login-brand"><span class="logo">P</span><strong>proxydeck</strong></div><span class="demo-pill">INTERAKTIVE DEMO</span><h1>Willkommen zurück</h1><p>Erkunde alle Funktionen der ProxyDeck-Oberfläche.</p><label>Benutzername<input id="demoLoginUser" value="admin" required></label><label>Passwort<input id="demoLoginPassword" type="password" value="proxydeck-demo" required></label><div class="login-error" id="demoLoginError"></div><small>Demo-Zugang: admin / proxydeck-demo</small><button class="btn primary">Anmelden</button></form></div>
+  <div class="login" id="login"><div class="login-book" aria-hidden="true"><span class="book-back"></span><span class="book-pages"></span><span class="book-cover"><i class="logo">P</i></span></div><form id="loginForm"><div class="login-brand"><span class="logo">P</span><strong>proxydeck</strong></div><span class="demo-pill">INTERAKTIVE DEMO</span><h1>Willkommen zurück</h1><p>Erkunde alle Funktionen der ProxyDeck-Oberfläche.</p><label>Benutzername<input id="demoLoginUser" value="admin" required></label><label>Passwort<input id="demoLoginPassword" type="password" value="proxydeck-demo" required></label><div class="login-error" id="demoLoginError"></div><small>Demo-Zugang: admin / proxydeck-demo</small><button class="btn primary">Anmelden</button></form></div>
   <script src="providers.js"></script>
   <script src="notifications.js"></script>
   <script src="demo.js"></script>
