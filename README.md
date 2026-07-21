@@ -12,6 +12,8 @@ ProxyDeck ist eine eigenständige Reverse-Proxy-Verwaltung mit mehreren IPv4-/IP
 - Login über sichere HttpOnly-Sitzungscookies und CSRF-Schutz
 - PBKDF2-SHA256-Passwort-Hashes mit 310.000 Iterationen
 - Rollen `admin`, `operator` und `viewer`
+- Leere Erstinstallation ohne automatisch angelegte Proxy Hosts oder Beispieldaten
+- Passwortänderung mit Prüfung des bisherigen Passworts und Widerruf aller Sitzungen
 - Mehrere IPv4-, IPv6- und Hostname-Upstreams pro Proxy Host
 - Gewichtung, Backup-Ziele, Round Robin, Least Connections und IP Hash
 - Aktive HTTP(S)-Healthchecks alle 30 Sekunden
@@ -126,13 +128,13 @@ ssh -L 8181:127.0.0.1:8181 user@server
 
 ## Vollständige Demo testen
 
-Die Demo ist unabhängig vom Dashboard über die IP-Adresse des Docker-Servers und Port `45131` erreichbar:
+Die Demo ist unabhängig vom Dashboard über die IP-Adresse des Docker-Servers und Port `45130` erreichbar:
 
 ```text
-http://SERVER-IP:45131
+http://SERVER-IP:45130
 ```
 
-Beispiel: `http://192.168.178.20:45131`
+Beispiel: `http://192.168.178.20:45130`
 
 Beim ersten Start wird `demo.localhost` mit dem Upstream `demo:80` angelegt. Der Gateway-Container veröffentlicht Port 80. Auf demselben Rechner funktioniert daher:
 

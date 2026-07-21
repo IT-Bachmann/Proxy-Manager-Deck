@@ -73,6 +73,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS acme_providers(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, provider TEXT NOT NULL, secret_data TEXT NOT NULL, created_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS notification_channels(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, channel_type TEXT NOT NULL CHECK(channel_type IN ('smtp','telegram','whatsapp')), config_data TEXT NOT NULL, events TEXT NOT NULL DEFAULT '["down","up","certificate"]', enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
         """)
         cert_columns = {row[1] for row in db.execute("PRAGMA table_info(certificates)")}
         if "challenge" not in cert_columns: db.execute("ALTER TABLE certificates ADD COLUMN challenge TEXT NOT NULL DEFAULT 'http-01'")
@@ -82,9 +83,6 @@ def init_db():
             if not password or len(password) < 16:
                 raise RuntimeError("PROXYDECK_ADMIN_PASSWORD must contain at least 16 characters on first start")
             db.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)", (os.environ.get("PROXYDECK_ADMIN_USER", "admin"), password_hash(password), "admin", int(time.time())))
-        if not db.execute("SELECT 1 FROM proxy_hosts LIMIT 1").fetchone():
-            cur = db.execute("INSERT INTO proxy_hosts(domain,scheme,port,websocket,strategy,enabled,created_at) VALUES(?,?,?,?,?,?,?)", ("demo.localhost", "http", 80, 1, "least_conn", 1, int(time.time())))
-            db.execute("INSERT INTO upstreams(proxy_id,address,family,weight,mode,health_path) VALUES(?,?,?,?,?,?)", (cur.lastrowid, "demo", "hostname", 100, "active", "/"))
 
 
 def rowdict(row):
@@ -294,6 +292,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
+        if path == "/api/branding":
+            with connect() as db: settings = {row["key"]: row["value"] for row in db.execute("SELECT key,value FROM settings WHERE key IN ('accent','logo','favicon')")}
+            self.send_json(200, {"accent": settings.get("accent", "#1ca471"), "logo": settings.get("logo", ""), "favicon": settings.get("favicon", "")}); return
         if path == "/api/session":
             session = self.require()
             if session: self.send_json(200, {"user": {"id": session["id"], "username": session["username"], "role": session["role"]}, "csrf": session["csrf"]})
@@ -335,11 +336,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_json(200, {"user": {"username": user["username"], "role": user["role"]}, "csrf": csrf}, {"Set-Cookie": f"proxydeck_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}{secure}"}); return
         session = self.require(("admin", "operator"), csrf=True)
         if not session: return
+        if path == "/api/account/password":
+            current_password, new_password = body.get("current_password", ""), body.get("new_password", "")
+            with connect() as db: user = db.execute("SELECT password_hash FROM users WHERE id=?", (session["id"],)).fetchone()
+            if not user or not password_ok(current_password, user["password_hash"]): self.send_json(403, {"error": "Das aktuelle Passwort ist nicht korrekt"}); return
+            if len(new_password) < 16 or new_password == current_password: self.send_json(400, {"error": "Das neue Passwort muss mindestens 16 Zeichen lang und unterschiedlich sein"}); return
+            with connect() as db:
+                db.execute("UPDATE users SET password_hash=? WHERE id=?", (password_hash(new_password), session["id"]))
+                db.execute("DELETE FROM sessions WHERE user_id=?", (session["id"],))
+                db.execute("INSERT INTO audit_log(user_id,action,detail,created_at) VALUES(?,?,?,?)", (session["id"], "account.password_changed", session["username"], int(time.time())))
+            self.send_json(200, {"ok": True, "message": "Passwort geändert; alle Sitzungen wurden beendet"}, {"Set-Cookie": "proxydeck_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"}); return
         if path == "/api/logout":
             cookie = http.cookies.SimpleCookie(self.headers.get("cookie")); token = cookie.get("proxydeck_session")
             if token:
                 with connect() as db: db.execute("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.value.encode()).hexdigest(),))
             self.send_json(200, {"ok": True}, {"Set-Cookie": "proxydeck_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"}); return
+        if path == "/api/branding":
+            if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
+            accent, logo, favicon = body.get("accent", ""), body.get("logo", ""), body.get("favicon", "")
+            image_re = re.compile(r"^data:image/(?:png|jpeg|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/=]+$")
+            if not re.fullmatch(r"#[0-9a-fA-F]{6}", accent) or any(value and (len(value) > 700_000 or not image_re.fullmatch(value)) for value in (logo, favicon)):
+                self.send_json(400, {"error": "Farbe oder Bilddatei ungültig (PNG/JPG/ICO, maximal 500 KB)"}); return
+            with connect() as db:
+                for key, value in (("accent", accent.lower()), ("logo", logo), ("favicon", favicon)):
+                    db.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+            self.audit(session["id"], "branding.update", accent.lower()); self.send_json(200, {"ok": True}); return
         if path == "/api/proxy-hosts":
             try:
                 domain = body["domain"].lower().strip(); port = int(body["port"]); targets = body["targets"]
@@ -360,10 +381,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/users":
             if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
             try:
-                if len(body["password"]) < 12 or body["role"] not in ("admin", "operator", "viewer"): raise ValueError()
+                if len(body["password"]) < 16 or body["role"] not in ("admin", "operator", "viewer"): raise ValueError()
                 with connect() as db: cur = db.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)", (body["username"].strip(), password_hash(body["password"]), body["role"], int(time.time())))
                 self.audit(session["id"], "user.create", body["username"]); self.send_json(201, {"id": cur.lastrowid})
-            except (ValueError, KeyError, sqlite3.IntegrityError): self.send_json(400, {"error": "Ungültiger oder vorhandener Benutzer; Passwort mindestens 12 Zeichen"})
+            except (ValueError, KeyError, sqlite3.IntegrityError): self.send_json(400, {"error": "Ungültiger oder vorhandener Benutzer; Passwort mindestens 16 Zeichen"})
             return
         if path == "/api/acme-providers":
             if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
