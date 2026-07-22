@@ -35,6 +35,7 @@ ACCESS_LOG = Path(os.environ.get("PROXYDECK_ACCESS_LOG", "/logs/access.log"))
 UPDATE_DIR = Path(os.environ.get("PROXYDECK_UPDATE_DIR", "/updates"))
 PORT = int(os.environ.get("PORT", "3000"))
 SESSION_TTL = 60 * 60 * 12
+SYSTEM_STARTED = int(time.time())
 HOST_RE = re.compile(r"^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$")
 MIME = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml"}
 
@@ -367,6 +368,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try: update_log = (UPDATE_DIR / "update.log").read_text(encoding="utf-8", errors="replace").splitlines()[-120:]
             except OSError: update_log = []
             self.send_json(200, {"status": status, "log": update_log}); return
+        if path == "/api/system/status":
+            if not self.require(): return
+            try: update_status = (UPDATE_DIR / "status").read_text(encoding="utf-8").strip()
+            except OSError: update_status = "idle"
+            with connect() as db:
+                hosts = db.execute("SELECT COUNT(*) FROM proxy_hosts").fetchone()[0]
+                active_hosts = db.execute("SELECT COUNT(*) FROM proxy_hosts WHERE enabled=1").fetchone()[0]
+                targets = db.execute("SELECT COUNT(*) total,SUM(CASE WHEN healthy=1 THEN 1 ELSE 0 END) healthy FROM upstreams").fetchone()
+                certificates = db.execute("SELECT COUNT(*) total,SUM(CASE WHEN status='issued' THEN 1 ELSE 0 END) issued FROM certificates").fetchone()
+            self.send_json(200, {"control": "online", "uptime_seconds": int(time.time()) - SYSTEM_STARTED, "update_status": update_status, "hosts": hosts, "active_hosts": active_hosts, "targets": {"total": targets["total"] or 0, "healthy": targets["healthy"] or 0}, "certificates": {"total": certificates["total"] or 0, "issued": certificates["issued"] or 0}}); return
         if path == "/api/proxy-hosts":
             if not self.require(): return
             with connect() as db:

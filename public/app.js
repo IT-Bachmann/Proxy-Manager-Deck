@@ -85,18 +85,40 @@ function toast(title, message) {
   element.classList.add("show"); setTimeout(() => element.classList.remove("show"), 3200);
 }
 
-function darkenColor(hex,factor=.68){const value=parseInt(hex.slice(1),16);return "#"+[value>>16,value>>8&255,value&255].map(channel=>Math.round(channel*factor).toString(16).padStart(2,"0")).join("")}function applyBranding(settings){document.documentElement.style.setProperty("--brand",settings.accent||"#16966a");document.documentElement.style.setProperty("--accent-dark",darkenColor(settings.accent||"#16966a"));document.documentElement.style.setProperty("--bg",settings.background||"#f3f6f4");document.documentElement.style.setProperty("--brand-dark",settings.accent||"#137d56");const dns4=document.querySelector("#dnsIpv4"),dns6=document.querySelector("#dnsIpv6");if(dns4){dns4.textContent=settings.gateway_ipv4||"Nicht konfiguriert";document.querySelector("#dnsIpv4State").textContent=settings.gateway_ipv4?"✓":"–"}if(dns6){dns6.textContent=settings.gateway_ipv6||"Nicht konfiguriert";document.querySelector("#dnsIpv6State").textContent=settings.gateway_ipv6?"✓":"–"}document.querySelectorAll(".custom-logo").forEach(img=>{img.src=settings.logo||"";img.hidden=!settings.logo;if(img.previousElementSibling?.classList.contains("logo"))img.previousElementSibling.hidden=Boolean(settings.logo)});if(settings.favicon){let link=document.querySelector('link[rel="icon"]');if(!link){link=document.createElement("link");link.rel="icon";document.head.append(link)}link.href=settings.favicon}}
+function darkenColor(hex,factor=.68){const value=parseInt(hex.slice(1),16);return "#"+[value>>16,value>>8&255,value&255].map(channel=>Math.round(channel*factor).toString(16).padStart(2,"0")).join("")}
+function mixColor(first,second,secondWeight){const values=[first,second].map(color=>{const value=parseInt(color.slice(1),16);return[value>>16,value>>8&255,value&255]});return"#"+values[0].map((channel,index)=>Math.round(channel*(1-secondWeight)+values[1][index]*secondWeight).toString(16).padStart(2,"0")).join("")}
+function applyBranding(settings){
+  const accent=settings.accent||"#16966a",root=document.documentElement,palette={"--brand":accent,"--brand-dark":mixColor(accent,"#000000",.18),"--accent-dark":mixColor(accent,"#000000",.32),"--soft":mixColor(accent,"#ffffff",.88),"--brand-faint":mixColor(accent,"#ffffff",.94),"--nav":mixColor(accent,"#000000",.80),"--nav-active":mixColor(accent,"#000000",.65),"--nav-hover":mixColor(accent,"#000000",.72),"--nav-badge":mixColor(accent,"#000000",.54),"--nav-text":mixColor(accent,"#ffffff",.72),"--nav-muted":mixColor(accent,"#ffffff",.52),"--nav-line":mixColor(accent,"#000000",.58),"--dark-bg":mixColor(accent,"#000000",.88),"--dark-panel":mixColor(accent,"#000000",.79),"--dark-line":mixColor(accent,"#000000",.62),"--dark-soft":mixColor(accent,"#000000",.70)};
+  Object.entries(palette).forEach(([name,value])=>root.style.setProperty(name,value));const selectedBackground=(settings.background||"#f3f6f4").toLowerCase();root.style.setProperty("--bg",selectedBackground==="#f3f6f4"?mixColor(accent,"#ffffff",.96):selectedBackground);
+  const dns4=document.querySelector("#dnsIpv4"),dns6=document.querySelector("#dnsIpv6");if(dns4){dns4.textContent=settings.gateway_ipv4||"Nicht konfiguriert";document.querySelector("#dnsIpv4State").textContent=settings.gateway_ipv4?"✓":"–"}if(dns6){dns6.textContent=settings.gateway_ipv6||"Nicht konfiguriert";document.querySelector("#dnsIpv6State").textContent=settings.gateway_ipv6?"✓":"–"}document.querySelectorAll(".custom-logo").forEach(img=>{img.src=settings.logo||"";img.hidden=!settings.logo;if(img.previousElementSibling?.classList.contains("logo"))img.previousElementSibling.hidden=Boolean(settings.logo)});if(settings.favicon){let link=document.querySelector('link[rel="icon"]');if(!link){link=document.createElement("link");link.rel="icon";document.head.append(link)}link.href=settings.favicon}
+}
 async function loadBranding(){try{applyBranding(await api("/api/branding"))}catch{}}
 function applyTheme(theme){const dark=theme==="dark";document.body.classList.toggle("dark",dark);const button=document.querySelector("#themeToggle");button.textContent=dark?"☀":"☾";button.title=dark?"Hellmodus einschalten":"Dunkelmodus einschalten"}applyTheme(localStorage.getItem("proxydeck-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));document.querySelector("#themeToggle").addEventListener("click",()=>{const next=document.body.classList.contains("dark")?"light":"dark";localStorage.setItem("proxydeck-theme",next);applyTheme(next)});document.querySelector("#refreshButton").addEventListener("click",async()=>{try{if(!document.querySelector("#realDashboard")?.hidden)await showRealDashboard();else if(document.querySelector("main>.content:not(#realDashboard)")?.dataset.view==="host-list")await showHostOverview();else await loadHosts();toast("Aktualisiert","Die Live-Daten wurden neu geladen.")}catch(error){toast("Aktualisierung fehlgeschlagen",error.message)}});
 function readImage(input){return new Promise((resolve,reject)=>{const file=input.files[0];if(!file)return resolve("");if(file.size>500000)return reject(new Error("Bild ist größer als 500 KB"));const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error("Bild konnte nicht gelesen werden"));reader.readAsDataURL(file)})}
 
+let updatePollTimer;
+async function pollUpdateStatus(){try{await showUpdateStatus()}catch{updatePollTimer=setTimeout(pollUpdateStatus,2500)}}
 async function showUpdateStatus() {
+  clearTimeout(updatePollTimer);
   const data = await api("/api/update/status");
   document.querySelector("#managerTitle").textContent = "ProxyDeck Update"; document.querySelector("#managerSubtitle").textContent = "GitHub-Aktualisierung und Docker-Neuaufbau";
   document.querySelector("#managerContent").innerHTML = `<div class="update-state"><div><strong>Status: ${escapeHtml(({idle:"Bereit",queued:"Wartet",running:"Update läuft",success:"Erfolgreich",failed:"Fehlgeschlagen"})[data.status]||data.status)}</strong><small>Lokale Änderungen werden nicht überschrieben.</small></div><button class="button" id="reloadUpdateStatus">Neu laden</button></div><pre class="system-log">${escapeHtml(data.log.join("\n")||"Noch kein Update ausgeführt.")}</pre>`;
-  document.querySelector("#reloadUpdateStatus").onclick=()=>showUpdateStatus().catch(error=>toast("Status nicht geladen",error.message)); managerDialog.showModal();
+  document.querySelector("#reloadUpdateStatus").onclick=()=>showUpdateStatus().catch(error=>toast("Status nicht geladen",error.message)); if(!managerDialog.open)managerDialog.showModal();
+  const updateButton=document.querySelector("#updateButton");updateButton.dataset.status=data.status;updateButton.textContent=data.status==="running"||data.status==="queued"?"Update läuft":data.status==="failed"?"Update fehlgeschlagen":data.status==="success"?"Aktuell":"Update prüfen";
+  if(data.status==="queued"||data.status==="running")updatePollTimer=setTimeout(pollUpdateStatus,2000);
 }
 document.querySelector("#updateButton").addEventListener("click",async()=>{if(!window.confirm("ProxyDeck jetzt von GitHub aktualisieren und die Container neu erstellen? Laufende Verbindungen können kurz unterbrochen werden."))return;try{await api("/api/update",{method:"POST",body:"{}"});await showUpdateStatus();toast("Update gestartet","GitHub wird geladen und Docker neu gebaut.")}catch(error){toast("Update nicht gestartet",error.message)}});
+
+function formatUptime(seconds){const days=Math.floor(seconds/86400),hours=Math.floor(seconds%86400/3600),minutes=Math.floor(seconds%3600/60);return days?`${days} T ${hours} Std`:`${hours} Std ${minutes} Min`}
+async function refreshSystemStatus(){
+  if(!state.csrf)return;
+  try{
+    const data=await api("/api/system/status"),updateNames={idle:"bereit",queued:"wartet",running:"läuft",success:"erfolgreich",failed:"fehlgeschlagen"};
+    document.querySelector("#systemStateTitle").textContent="Control online";document.querySelector("#systemStateDetail").textContent=`${data.active_hosts}/${data.hosts} Hosts aktiv · ${data.targets.healthy}/${data.targets.total} Ziele gesund`;
+    const updateButton=document.querySelector("#updateButton");updateButton.dataset.status=data.update_status;updateButton.textContent=data.update_status==="running"||data.update_status==="queued"?"Update läuft":data.update_status==="failed"?"Update fehlgeschlagen":data.update_status==="success"?"Aktuell":"Update prüfen";
+    const dashboard=document.querySelector("#realDashboard");if(dashboard&&!dashboard.hidden){const hour=new Date().getHours(),greeting=hour<11?"Guten Morgen":hour<18?"Guten Tag":"Guten Abend";dashboard.querySelector(".real-welcome h1").textContent=`${greeting}, ${document.querySelector("#accountName").textContent}`;let summary=dashboard.querySelector("#systemSummary");if(!summary){summary=document.createElement("section");summary.id="systemSummary";summary.className="system-summary";dashboard.insertBefore(summary,dashboard.querySelector(".real-stats"))}summary.innerHTML=`<article><strong class="online">● System online</strong><small>Control-Laufzeit ${formatUptime(data.uptime_seconds)}</small></article><article><strong>${data.active_hosts}/${data.hosts} Hosts</strong><small>aktiv konfiguriert</small></article><article><strong>${data.targets.healthy}/${data.targets.total} Ziele</strong><small>Healthchecks gesund</small></article><article><strong>Update ${escapeHtml(updateNames[data.update_status]||data.update_status)}</strong><small>GitHub-Updater</small></article>`}
+  }catch{document.querySelector("#systemStateTitle").textContent="Verbindung unterbrochen";document.querySelector("#systemStateDetail").textContent="Control wird neu verbunden"}
+}
 
 async function loadHosts() {
   const [data, certificateData] = await Promise.all([api("/api/proxy-hosts"), api("/api/certificates")]);
@@ -187,7 +209,7 @@ document.querySelector("#logoutButton").addEventListener("click",async()=>{
 });
 
 const managerDialog = document.querySelector("#managerDialog");
-document.querySelector("#closeManager").addEventListener("click", () => managerDialog.close());
+document.querySelector("#closeManager").addEventListener("click", () => { clearTimeout(updatePollTimer); managerDialog.close(); });
 document.querySelector("#dnsHelpButton").addEventListener("click",async()=>{const settings=await api("/api/branding");document.querySelector("#managerTitle").textContent="DNS-Anleitung";document.querySelector("#managerSubtitle").textContent="Records beim DNS-Anbieter eintragen";document.querySelector("#managerContent").innerHTML=`<div class="dns-guide"><p>Lege für deine Proxy-Domain die folgenden Records an. Als Name verwendest du je nach Anbieter die vollständige Domain oder nur den Host-Anteil.</p><div><span class="record">A</span><code>${escapeHtml(settings.gateway_ipv4||"Zuerst Gateway-IPv4 unter Einstellungen eintragen")}</code></div><div><span class="record purple">AAAA</span><code>${escapeHtml(settings.gateway_ipv6||"Optional: Gateway-IPv6 unter Einstellungen eintragen")}</code></div><p>Die DNS-Adressen müssen auf den Server beziehungsweise Router zeigen, der TCP 80 und 443 an ProxyDeck weiterleitet.</p></div>`;managerDialog.showModal()});
 document.querySelectorAll("[data-manager]").forEach(link => link.addEventListener("click", async event => {
   document.querySelectorAll(".sidebar nav a").forEach(item=>item.classList.toggle("active",item===link));
@@ -221,6 +243,11 @@ const certificateObserver = new MutationObserver(async () => {
   const form = document.querySelector("#certForm");
   if (!form || form.dataset.enhanced) return;
   form.dataset.enhanced = "1";
+  const embeddedProviderForm = document.querySelector("#providerForm");
+  if (embeddedProviderForm) {
+    embeddedProviderForm.outerHTML = '<div class="provider-hint"><div><strong>DNS-Zugangsdaten getrennt verwalten</strong><small>API-Schlüssel und Anbieter-Einstellungen befinden sich übersichtlich unter DNS-Plugins.</small></div><button class="button" id="openDnsPlugins" type="button">DNS-Plugins öffnen</button></div>';
+    document.querySelector("#openDnsPlugins").onclick = () => { managerDialog.close(); document.querySelector('[data-manager="providers"]').click(); };
+  }
   const domainInput = form.elements.domain;
   if (domainInput) {
     const label = domainInput.closest("label");
@@ -249,4 +276,16 @@ const certificateObserver = new MutationObserver(async () => {
 });
 certificateObserver.observe(document.querySelector("#managerContent"), { childList: true });
 
-loadBranding();restoreSession();
+const dnsProviderObserver = new MutationObserver(async () => {
+  const form=document.querySelector("#dnsPluginForm");if(!form||form.dataset.structured)return;form.dataset.structured="1";
+  const providers=(await api("/api/acme-providers")).items;
+  const idLabel=document.createElement("label");idLabel.innerHTML=`<span>Plugin anlegen oder bearbeiten</span><select name="id"><option value="">Neues DNS-Plugin</option>${providers.map(provider=>`<option value="${provider.id}">${escapeHtml(provider.name)} · ${escapeHtml(provider.provider)}</option>`).join("")}</select>`;form.prepend(idLabel);
+  const primary=form.elements.primary.closest("label"),secondary=form.elements.secondary.closest("label"),tertiary=form.elements.tertiary.closest("label");
+  const definitions={cloudflare:[["API-Token",true],["",false],["",false]],digitalocean:[["API-Token",true],["",false],["",false]],route53:[["Access Key ID",true],["Secret Access Key",true],["",false]],ionos:[["API-Token",true],["",false],["",false]],hetzner:[["DNS API-Token",true],["",false],["",false]],ipv64:[["API-Token",true],["",false],["",false]],strato:[["Benutzername",true],["Passwort",true],["",false]],powerdns:[["PowerDNS API-URL",true],["Server-ID",true],["PowerDNS API-Token",true]]};
+  const sync=()=>{const fields=[primary,secondary,tertiary],definition=definitions[form.elements.provider.value];fields.forEach((label,index)=>{const [title,visible]=definition[index];label.hidden=!visible;label.querySelector("span").textContent=title;label.querySelector("input").required=visible});};form.elements.provider.addEventListener("change",sync);sync();
+  form.elements.id.addEventListener("change",()=>{const selected=providers.find(provider=>provider.id===Number(form.elements.id.value));if(selected){form.elements.name.value=selected.name;form.elements.provider.value=selected.provider;sync()}else{form.elements.name.value=""}});
+  form.addEventListener("submit",async event=>{event.preventDefault();event.stopImmediatePropagation();const values=Object.fromEntries(new FormData(form));let credentials;if(["cloudflare","ionos","hetzner","ipv64"].includes(values.provider))credentials={api_token:values.primary};else if(values.provider==="digitalocean")credentials={token:values.primary};else if(values.provider==="route53")credentials={access_key_id:values.primary,secret_access_key:values.secondary};else if(values.provider==="strato")credentials={username:values.primary,password:values.secondary};else credentials={api_url:values.primary,server_id:values.secondary,api_token:values.tertiary};try{await api("/api/acme-providers",{method:"POST",body:JSON.stringify({id:values.id?Number(values.id):undefined,name:values.name,provider:values.provider,credentials,current_password:values.current_password})});managerDialog.close();toast("DNS-Plugin gespeichert",values.name)}catch(error){toast("Plugin nicht gespeichert",error.message)}},true);
+});
+dnsProviderObserver.observe(document.querySelector("#managerContent"),{childList:true});
+
+loadBranding();restoreSession();setTimeout(refreshSystemStatus,1200);setInterval(refreshSystemStatus,10000);

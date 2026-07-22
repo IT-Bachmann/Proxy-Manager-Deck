@@ -4,7 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ProxyDeck – Vollständige Demo</title>
-  <link rel="stylesheet" href="demo.css?v=20260721-2">
+  <link rel="stylesheet" href="demo.css?v=20260722-3">
+  <link rel="stylesheet" href="palette.css?v=20260722-1">
+  <link rel="stylesheet" href="book3d.css?v=20260722-1">
 </head>
 <body>
   <div class="shell">
@@ -41,7 +43,9 @@
   <div class="login" id="login"><div class="login-book" aria-hidden="true"><span class="book-back"></span><span class="book-pages"></span><span class="book-cover"><i class="logo">P</i></span></div><form id="loginForm"><div class="login-brand"><span class="logo">P</span><strong>proxydeck</strong></div><span class="demo-pill">INTERAKTIVE DEMO</span><h1>Willkommen zurück</h1><p>Erkunde alle Funktionen der ProxyDeck-Oberfläche.</p><label>Benutzername<input id="demoLoginUser" value="admin" required></label><label>Passwort<input id="demoLoginPassword" type="password" value="proxydeck-demo" required></label><div class="login-error" id="demoLoginError"></div><small>Demo-Zugang: admin / proxydeck-demo</small><button class="btn primary">Anmelden</button></form></div>
   <script src="providers.js"></script>
   <script src="notifications.js"></script>
-  <script src="demo.js?v=20260721-2"></script>
+  <script>window.applyDemoPalette=()=>{};</script>
+  <script src="demo.js?v=20260722-3"></script>
+  <script src="palette.js?v=20260722-1"></script>
   <script src="theme.js"></script>
 </body>
 </html>
