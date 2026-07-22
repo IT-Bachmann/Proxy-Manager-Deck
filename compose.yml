@@ -44,12 +44,10 @@ services:
       control: { condition: service_healthy }
 
   demo:
-    image: nginx:1.27-alpine
+    build: ./demo
     restart: unless-stopped
     ports:
       - "45130:80"
-    volumes:
-      - ./demo:/usr/share/nginx/html:ro
     networks: [edge]
 
   updater:
