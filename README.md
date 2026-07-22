@@ -1,118 +1,279 @@
 # ProxyDeck
 
-> Das Projekt hieß in der frühen Entwicklungsphase „Relaydeck“. Hinweise für bestehende Testinstallationen stehen in [`MIGRATION_TO_PROXYDECK.md`](MIGRATION_TO_PROXYDECK.md).
+Eine responsive, selbst gehostete Reverse-Proxy-Verwaltung für Nginx mit mehreren IPv4-, IPv6- und Hostname-Upstreams pro Domain.
 
-ProxyDeck ist eine eigenständige Reverse-Proxy-Verwaltung mit mehreren IPv4-/IPv6-Upstreams pro Domain. Das Repository enthält ein ausführbares Docker-MVP, nicht nur ein Design-Mockup.
+A responsive, self-hosted Nginx reverse-proxy manager supporting multiple IPv4, IPv6, and hostname upstreams per domain.
 
-## Funktionen
+[Deutsch](#deutsch) · [English](#english)
 
-- SQLite-Datenbank mit WAL-Modus und Fremdschlüsseln
-- Login über sichere HttpOnly-Sitzungscookies und CSRF-Schutz
-- PBKDF2-SHA256-Passwort-Hashes mit 310.000 Iterationen
-- Rollen `admin`, `operator` und `viewer`
-- Leere Erstinstallation ohne automatisch angelegte Proxy Hosts oder Beispieldaten
-- Passwortänderung mit Prüfung des bisherigen Passworts und Widerruf aller Sitzungen
-- Mehrere IPv4-, IPv6- und Hostname-Upstreams pro Proxy Host
-- Gewichtung, Backup-Ziele, Round Robin, Least Connections und IP Hash
-- Aktive HTTP(S)-Healthchecks alle 30 Sekunden
-- Atomar geschriebene Nginx-Konfiguration mit Prüfung vor dem Reload
-- ACME/Let's Encrypt über HTTP-01 und DNS-01
-- DNS-Plugins für Cloudflare, DigitalOcean, AWS Route 53, IONOS, Hetzner DNS, IPv64.net, STRATO und PowerDNS
-- HTTP-Weiterleitungen sowie TCP-/UDP-Streams
-- Audit-Log und eigenständige responsive Oberfläche
-- Verschlüsselte Benachrichtigungskanäle für SMTP/E-Mail, Telegram Bot und WhatsApp Cloud API
-- Ereignisse für Upstream-Ausfall, Erholung und ACME-/Zertifikatsfehler
-- Separater Demo-Webserver
+> ProxyDeck befindet sich in aktiver Entwicklung. Vor einem öffentlichen Produktionseinsatz sind HTTPS für das Dashboard, Firewall-Regeln und regelmäßige Volume-Backups erforderlich.
 
-## Schnellstart
+---
 
-1. Umgebung anlegen:
+## Deutsch
 
-   ```bash
-   cp .env.example .env
-   ```
+### Überblick
 
-2. In `.env` unbedingt ein langes, zufälliges Administratorpasswort setzen.
+ProxyDeck verwaltet Reverse Proxies, Weiterleitungen, TCP-/UDP-Streams, Zertifikate und Healthchecks über eine eigene Weboberfläche. Die Anwendung verwendet SQLite für persistente Daten und erzeugt reale Nginx-Konfigurationen. Änderungen werden atomar geschrieben, mit `nginx -t` geprüft und anschließend ohne vollständigen Gateway-Neustart geladen.
 
-3. Container bauen und starten:
+Ein Proxy Host kann mehrere gemischte Ziele besitzen, beispielsweise eine interne IPv4-Adresse und eine öffentliche IPv6-Adresse. Damit wird eine Domain nur einmal angelegt und trotzdem auf mehrere Ziele verteilt.
 
-   ```bash
-   docker compose up -d --build
-   ```
+### Funktionen
 
-4. Dashboard über `http://127.0.0.1:8181` öffnen und als `admin` anmelden.
+- mehrere IPv4-, IPv6- und Hostname-Upstreams pro Domain
+- Round Robin, Least Connections, IP Hash, Gewichtung und Backup-Ziele
+- reale HTTP(S)-Healthchecks mit Latenz und Erreichbarkeitsstatus
+- echte Nginx-Aktivierung mit validiertem Auto-Reload
+- automatische HTTP-zu-HTTPS-Weiterleitung bei aktiviertem SSL
+- Let's Encrypt über ACME HTTP-01 und DNS-01
+- Multi-Domain-/SAN- und Wildcard-Zertifikate
+- DNS-Anbieter: Cloudflare, DigitalOcean, AWS Route 53, IONOS, Hetzner DNS, IPv64.net, STRATO und PowerDNS
+- HTTP-Weiterleitungen und TCP-/UDP-Streams
+- Benutzerverwaltung mit Rollen `admin`, `operator` und `viewer`
+- PBKDF2-SHA256-Passwort-Hashes, HttpOnly-Sitzungen und CSRF-Schutz
+- verschlüsselte API-Schlüssel in SQLite; Änderungen erst nach erneuter Passworteingabe
+- Benachrichtigungen über SMTP/E-Mail, Telegram und WhatsApp Cloud API
+- Traffic-, Treffer-, Latenz- und Fehlerauswertung aus echten Nginx-Logs
+- Audit-Log und Systemprotokoll
+- anpassbare Farben, Hintergrund, Logo und Favicon bis jeweils 2 MB
+- Deutsch und Englisch sowie UI-Skalierung
+- responsive Desktop-, Tablet- und Mobilansicht
+- integrierte Updateprüfung mit Status, Timeout und Updater-Heartbeat
+- separate interaktive Demo
+- Docker-Unterstützung für AMD64, ARM64 und eingeschränkt ARMv7
 
-### Passwort nach Wiederverwendung eines Docker-Volumes
-
-Wenn `.env` neu erstellt wurde, aber das SQLite-Docker-Volume erhalten blieb, muss der vorhandene Benutzer einmal mit dem aktuellen Passwort synchronisiert werden:
+### Schnellinstallation
 
 ```bash
-docker compose exec control python -c 'import os,sqlite3; from server import password_hash,DB; db=sqlite3.connect(DB); user=os.environ.get("PROXYDECK_ADMIN_USER","admin"); password=os.environ["PROXYDECK_ADMIN_PASSWORD"]; db.execute("UPDATE users SET password_hash=? WHERE username=?",(password_hash(password),user)); db.execute("DELETE FROM sessions"); db.commit()'
+git clone https://github.com/IT-Bachmann/Proxy-Manager-Deck.git
+cd Proxy-Manager-Deck
+chmod +x install.sh
+sudo ./install.sh
 ```
 
-Das Dashboard bindet absichtlich nur an Loopback. Für einen entfernten Server empfiehlt sich zunächst ein SSH-Tunnel:
+Das Installationsskript erkennt Linux, Architektur, LXC, freien Speicher, Portkonflikte, Docker und Docker Compose. Fehlende Docker-Pakete werden auf unterstützten Distributionen installiert.
+
+Alternativ:
+
+```bash
+cp .env.example .env
+nano .env
+docker compose up -d --build
+```
+
+In `.env` müssen mindestens gesetzt werden:
+
+```env
+PROXYDECK_ADMIN_USER=admin
+PROXYDECK_ADMIN_PASSWORD=ein-zufälliges-passwort-mit-mindestens-16-zeichen
+PROXYDECK_SECRET_KEY=ein-gültiger-fernet-schlüssel
+```
+
+Einen Fernet-Schlüssel erzeugen:
+
+```bash
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+### Aufruf und Ports
+
+| Dienst | Port | Beschreibung |
+|---|---:|---|
+| Dashboard | `8181` | Verwaltungsoberfläche, standardmäßig nur an `127.0.0.1` gebunden |
+| Demo | `45130` | Öffentliche interaktive Demo |
+| HTTP | `80` | Proxy und ACME HTTP-01 |
+| HTTPS | `443` | TLS-Reverse-Proxy |
+| Stream-Beispiel | `9000/tcp`, `9000/udp` | Beispiel; weitere Ports in `compose.yml` veröffentlichen |
+
+Dashboard lokal:
+
+```text
+http://127.0.0.1:8181
+```
+
+Dashboard auf einem entfernten Server sicher über SSH öffnen:
 
 ```bash
 ssh -L 8181:127.0.0.1:8181 user@server
 ```
 
-## Vollständige Demo testen
+Danach lokal `http://127.0.0.1:8181` öffnen.
 
-Die Demo ist unabhängig vom Dashboard über die IP-Adresse des Docker-Servers und Port `45130` erreichbar:
+Demo:
 
 ```text
 http://SERVER-IP:45130
 ```
 
-Beispiel: `http://192.168.178.20:45130`
+Demo-Zugang: `admin` / `proxydeck-demo`. Demo-Änderungen bleiben ausschließlich im lokalen Browser.
 
-Beim ersten Start wird `demo.localhost` mit dem Upstream `demo:80` angelegt. Der Gateway-Container veröffentlicht Port 80. Auf demselben Rechner funktioniert daher:
+### Zertifikate
 
-```bash
-curl http://demo.localhost
-```
+Für HTTP-01 müssen A- und/oder AAAA-Record auf das ProxyDeck-Gateway zeigen und Port 80 von außen erreichbar sein. Wildcards wie `*.example.com` benötigen DNS-01 und ein konfiguriertes DNS-Plugin. Ein Zertifikat wird zunächst bewusst in der Zertifikatsverwaltung angefordert und anschließend dem Proxy Host zugewiesen. Bereits ausgestellte Zertifikate werden automatisch erneuert.
 
-Die ausgelieferte Seite ist eine eigenständige interaktive Produktdemo. Sie funktioniert auch direkt als lokale Datei und umfasst Dashboard, Proxy Hosts mit mehreren IPv4-/IPv6-Zielen, Weiterleitungen, Streams, Zertifikate, Healthchecks, Benutzer und Audit-Log.
+### Updates
 
-Demo-Zugang:
+ProxyDeck prüft standardmäßig alle sechs Stunden sowie manuell über die Oberfläche auf neue Commits. Der Updater besitzt einen Heartbeat und beendet festhängende Git-Abfragen per Timeout. Er erstellt sich während eines Updates nicht mehr selbst neu, sondern lädt sein aktualisiertes Skript ohne Unterbrechung.
 
-```text
-Benutzer: admin
-Passwort: proxydeck-demo
-```
-
-Änderungen der Demo werden nur im lokalen Browser gespeichert. Über die Schaltfläche oben rechts lassen sich alle Beispieldaten zurücksetzen. Die Dateien liegen unter [`demo/`](demo/).
-
-## Let's Encrypt
-
-Vor der Anforderung müssen der A- und/oder AAAA-Record der Domain auf den ProxyDeck-Server zeigen und TCP-Port 80 von außen erreichbar sein. Danach in der Zertifikatsverwaltung Domain und E-Mail eintragen. Erst nach erfolgreicher Ausstellung beim Proxy Host „SSL aktivieren“.
-
-Certbot speichert Zertifikate im gemeinsamen Docker-Volume `letsencrypt`. Die Gateway-Konfiguration referenziert `/etc/letsencrypt/live/<domain>/fullchain.pem` und `privkey.pem`.
-
-Für Wildcard-Zertifikate und Server ohne öffentlich erreichbaren Port 80 kann DNS-01 verwendet werden. DNS-Zugangsdaten werden mit `PROXYDECK_SECRET_KEY` verschlüsselt in SQLite gespeichert und über die API nie wieder ausgegeben. Anlegen oder Rotieren eines Schlüssels erfordert zusätzlich zur aktiven Admin-Sitzung die erneute Eingabe des aktuellen Passworts.
-
-Die Fernet-Schlüsselvariable wird beispielsweise so erzeugt:
+Manuelles Update:
 
 ```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+git pull --ff-only
+docker compose up -d --build
 ```
 
-Hinweis zu Hetzner: Der in acme.sh 3.1.2 enthaltene Hook verwendet je nach Kontomigration noch die ältere Hetzner-DNS-API. Für bereits auf die neue Hetzner DNS Console migrierte Zonen muss der Adapter vor Produktion gegen die aktuelle API geprüft werden.
+Status prüfen:
 
-## Streams
+```bash
+docker compose ps
+docker compose logs --tail=100 control gateway updater
+```
 
-Docker muss veröffentlichte Stream-Ports bereits beim Containerstart kennen. `compose.yml` enthält TCP und UDP 9000 als Beispiel. Für weitere Ports entsprechende `ports`-Einträge ergänzen und den Gateway-Container neu erstellen.
+### Proxmox LXC
 
-## Produktionshinweise
+Auf dem Proxmox-Host müssen für den LXC normalerweise Nesting und Keyctl aktiviert werden:
 
-Dieses MVP besitzt bereits echte Persistenz und Nginx-Aktivierung, benötigt vor öffentlichem Produktionseinsatz aber zusätzlich Härtung: Dashboard über HTTPS, Firewall, regelmäßige Volume-Backups, Rate-Limits am Login, automatisierte Integrationstests und eine unprivilegierte ACME-Sidecar-Ausführung. `PROXYDECK_SECURE_COOKIE=1` erst aktivieren, wenn das Dashboard ausschließlich per HTTPS erreichbar ist.
+```bash
+pct set CTID -features nesting=1,keyctl=1
+```
 
-Die Verwaltungsoberfläche und die Offline-Demo besitzen Breakpoints für Desktop, Tablet und Smartphone. Tabellen bleiben mobil scrollbar, Formulare werden einspaltig und die Navigation wird als mobiles Menü geöffnet.
+Danach den Container neu starten. Docker-IPv6 benötigt außerdem aktiviertes IPv6 im LXC. Bei überlappenden Docker-Netzen die bestehenden Netze mit `docker network ls` und `docker network inspect` prüfen und in `compose.yml` ein freies Subnetz wählen.
 
-## Wichtige Dateien
+### Daten und Sicherheit
 
-- `server.py` – API, SQLite, Login, ACME, Healthchecks und Generator
-- `public/` – Verwaltungsoberfläche
-- `gateway/` – Nginx-Gateway mit geprüftem Auto-Reload
-- `compose.yml` – Control Plane, Gateway und Demo-Dienst
-- `demo/index.html` – Test-Webseite
+Persistente Daten liegen in Docker-Volumes für SQLite, Zertifikate, generierte Konfigurationen, Logs und Updatezustand. Vor Updates oder Änderungen an Volumes sollte ein Backup erstellt werden. `PROXYDECK_SECURE_COOKIE=1` darf erst gesetzt werden, wenn das Dashboard ausschließlich über HTTPS erreichbar ist.
+
+---
+
+## English
+
+### Overview
+
+ProxyDeck manages reverse proxies, redirects, TCP/UDP streams, certificates, and health checks through a dedicated web interface. It stores persistent state in SQLite and generates real Nginx configuration. Changes are written atomically, validated with `nginx -t`, and reloaded without restarting the entire gateway.
+
+A proxy host may contain multiple mixed targets, such as an internal IPv4 address and a public IPv6 address. The domain is created once and traffic can still be distributed across several destinations.
+
+### Features
+
+- multiple IPv4, IPv6, and hostname upstreams per domain
+- round robin, least connections, IP hash, weights, and backup targets
+- real HTTP(S) health checks with latency and availability status
+- real Nginx activation with validated automatic reloads
+- automatic HTTP-to-HTTPS redirects when SSL is enabled
+- Let's Encrypt using ACME HTTP-01 and DNS-01
+- multi-domain/SAN and wildcard certificates
+- DNS providers: Cloudflare, DigitalOcean, AWS Route 53, IONOS, Hetzner DNS, IPv64.net, STRATO, and PowerDNS
+- HTTP redirects and TCP/UDP streams
+- user management with `admin`, `operator`, and `viewer` roles
+- PBKDF2-SHA256 password hashes, HttpOnly sessions, and CSRF protection
+- encrypted API secrets in SQLite; changing secrets requires password confirmation
+- SMTP/email, Telegram, and WhatsApp Cloud API notifications
+- traffic, request, latency, and error analytics from real Nginx logs
+- audit log and system log
+- customizable colors, background, logo, and favicon up to 2 MB each
+- German and English language support plus interface scaling
+- responsive desktop, tablet, and mobile layouts
+- integrated update checks with status, timeout, and updater heartbeat
+- separate interactive demo
+- Docker support for AMD64, ARM64, and limited ARMv7 support
+
+### Quick installation
+
+```bash
+git clone https://github.com/IT-Bachmann/Proxy-Manager-Deck.git
+cd Proxy-Manager-Deck
+chmod +x install.sh
+sudo ./install.sh
+```
+
+The installer detects Linux, CPU architecture, LXC, available disk space, port conflicts, Docker, and Docker Compose. It installs missing Docker packages on supported distributions.
+
+Manual installation:
+
+```bash
+cp .env.example .env
+nano .env
+docker compose up -d --build
+```
+
+At minimum, configure:
+
+```env
+PROXYDECK_ADMIN_USER=admin
+PROXYDECK_ADMIN_PASSWORD=a-random-password-with-at-least-16-characters
+PROXYDECK_SECRET_KEY=a-valid-fernet-key
+```
+
+Generate a Fernet key:
+
+```bash
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+### Access and ports
+
+| Service | Port | Description |
+|---|---:|---|
+| Dashboard | `8181` | Management interface, bound to `127.0.0.1` by default |
+| Demo | `45130` | Public interactive demo |
+| HTTP | `80` | Proxy and ACME HTTP-01 |
+| HTTPS | `443` | TLS reverse proxy |
+| Stream example | `9000/tcp`, `9000/udp` | Example only; publish additional ports in `compose.yml` |
+
+For a remote server, use an SSH tunnel:
+
+```bash
+ssh -L 8181:127.0.0.1:8181 user@server
+```
+
+Then open `http://127.0.0.1:8181` locally. The demo is available at `http://SERVER-IP:45130` using `admin` / `proxydeck-demo`.
+
+### Certificates
+
+For HTTP-01, the domain's A and/or AAAA records must point to the ProxyDeck gateway and port 80 must be publicly reachable. Wildcards such as `*.example.com` require DNS-01 and a configured DNS plugin. Certificates are deliberately requested from the certificate manager and then assigned to a proxy host. Issued certificates are renewed automatically.
+
+### Updates
+
+ProxyDeck checks for new commits every six hours by default and can also be checked manually from the interface. The updater uses a heartbeat and timeouts for stalled Git operations. It no longer recreates its own container during an update; it reloads the updated script without interruption.
+
+Manual update:
+
+```bash
+git pull --ff-only
+docker compose up -d --build
+```
+
+Check the service status:
+
+```bash
+docker compose ps
+docker compose logs --tail=100 control gateway updater
+```
+
+### Proxmox LXC
+
+Nesting and Keyctl normally need to be enabled on the Proxmox host:
+
+```bash
+pct set CTID -features nesting=1,keyctl=1
+```
+
+Restart the container afterwards. Docker IPv6 also requires IPv6 to be enabled inside the LXC. If Docker reports overlapping networks, inspect existing networks and select an unused subnet in `compose.yml`.
+
+### Data and security
+
+Persistent data is stored in Docker volumes for SQLite, certificates, generated configuration, logs, and updater state. Back up these volumes before upgrades or storage changes. Enable `PROXYDECK_SECURE_COOKIE=1` only when the dashboard is exclusively available through HTTPS.
+
+### Project layout
+
+- `server.py` — API, authentication, SQLite, ACME, health checks, and Nginx generator
+- `public/` — management interface
+- `gateway/` — Nginx gateway and validated reload watcher
+- `updater/` — GitHub and Docker updater
+- `demo/` — standalone interactive demo
+- `compose.yml` — complete Docker Compose stack
+- `install.sh` — Linux installer
+
+### License
+
+See [LICENSE](LICENSE).

@@ -53,6 +53,11 @@ services:
   updater:
     build: ./updater
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /updates/heartbeat && test $$(($$(date +%s) - $$(cat /updates/heartbeat))) -lt 20"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
     environment:
       UPDATE_BRANCH: ${PROXYDECK_UPDATE_BRANCH:-main}
       UPDATE_CHECK_INTERVAL: ${PROXYDECK_UPDATE_CHECK_INTERVAL:-21600}

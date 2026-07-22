@@ -59,8 +59,13 @@ while true; do
       git -C /workspace rev-parse HEAD > /updates/remote_commit 2>/dev/null || true
       date +%s > /updates/last_checked
       date -u +'%Y-%m-%dT%H:%M:%SZ UPDATE erfolgreich' >> /updates/update.log
-      date -u +'%Y-%m-%dT%H:%M:%SZ Updater wird auf die neue Version umgestellt' >> /updates/update.log
-      docker compose -p "${COMPOSE_PROJECT_NAME:-proxy-manager-deck}" -f /workspace/compose.yml --project-directory /workspace up -d --force-recreate updater >> /updates/update.log 2>&1
+      # Never recreate this container from inside itself. Docker may remove the
+      # running updater before its Compose client has created the replacement.
+      # Reload the freshly pulled script in the existing container instead.
+      if [ -r /workspace/updater/update.sh ]; then
+        date -u +'%Y-%m-%dT%H:%M:%SZ Updater-Skript wird ohne Container-Unterbrechung neu geladen' >> /updates/update.log
+        exec /bin/sh /workspace/updater/update.sh
+      fi
     else
       printf 'failed' > /updates/status
       date -u +'%Y-%m-%dT%H:%M:%SZ UPDATE fehlgeschlagen' >> /updates/update.log

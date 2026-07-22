@@ -319,7 +319,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def json_body(self):
         length = int(self.headers.get("content-length", "0"))
-        if length > 1_000_000:
+        # Two 2 MiB images need roughly 5.6 MiB after Base64 encoding.
+        if length > 6 * 1024 * 1024:
             raise ValueError("body too large")
         return json.loads(self.rfile.read(length) or b"{}")
 
@@ -437,6 +438,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
         try: body = self.json_body()
+        except ValueError as error:
+            if str(error) == "body too large":
+                self.close_connection = True
+                self.send_json(413, {"error": "Upload zu groß: Logo und Favicon dürfen jeweils maximal 2 MB groß sein"}, {"Connection": "close"})
+            else:
+                self.send_json(400, {"error": "Ungültige Anfrage"})
+            return
         except Exception: self.send_json(400, {"error": "Ungültige Anfrage"}); return
         if path == "/api/login":
             with connect() as db: user = db.execute("SELECT * FROM users WHERE username=? AND enabled=1", (body.get("username", ""),)).fetchone()
