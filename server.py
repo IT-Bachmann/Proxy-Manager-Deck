@@ -81,6 +81,8 @@ def init_db():
         cert_columns = {row[1] for row in db.execute("PRAGMA table_info(certificates)")}
         if "challenge" not in cert_columns: db.execute("ALTER TABLE certificates ADD COLUMN challenge TEXT NOT NULL DEFAULT 'http-01'")
         if "provider_id" not in cert_columns: db.execute("ALTER TABLE certificates ADD COLUMN provider_id INTEGER REFERENCES acme_providers(id)")
+        if "domains_json" not in cert_columns: db.execute("ALTER TABLE certificates ADD COLUMN domains_json TEXT")
+        if "cert_name" not in cert_columns: db.execute("ALTER TABLE certificates ADD COLUMN cert_name TEXT")
         proxy_columns = {row[1] for row in db.execute("PRAGMA table_info(proxy_hosts)")}
         if "certificate_id" not in proxy_columns: db.execute("ALTER TABLE proxy_hosts ADD COLUMN certificate_id INTEGER REFERENCES certificates(id)")
         if not db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
@@ -185,8 +187,8 @@ def generate_nginx():
             listen = "    listen 443 ssl;\n    listen [::]:443 ssl;" if ssl else "    listen 80;\n    listen [::]:80;"
             cert_domain = proxy["domain"]
             if ssl and proxy["certificate_id"]:
-                selected_cert = db.execute("SELECT domain FROM certificates WHERE id=? AND status='issued'", (proxy["certificate_id"],)).fetchone()
-                if selected_cert: cert_domain = selected_cert["domain"]
+                selected_cert = db.execute("SELECT domain,cert_name FROM certificates WHERE id=? AND status='issued'", (proxy["certificate_id"],)).fetchone()
+                if selected_cert: cert_domain = selected_cert["cert_name"] or selected_cert["domain"]
             cert = f"\n    ssl_certificate /etc/letsencrypt/live/{cert_domain}/fullchain.pem;\n    ssl_certificate_key /etc/letsencrypt/live/{cert_domain}/privkey.pem;" if ssl else ""
             websocket = "\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection $connection_upgrade;" if proxy["websocket"] else ""
             http_parts.append(f"""server {{
@@ -527,19 +529,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/certificates/request":
             if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
-            domain, email = body.get("domain", ""), body.get("email", "")
-            if not HOST_RE.match(domain) or "@" not in email: self.send_json(400, {"error": "Domain oder E-Mail ungültig"}); return
+            raw_domains, email = body.get("domains", body.get("domain", "")), body.get("email", "")
+            domains = raw_domains if isinstance(raw_domains, list) else re.split(r"[\s,;]+", str(raw_domains))
+            domains = list(dict.fromkeys(value.lower().strip().rstrip(".") for value in domains if value.strip()))
+            if any(value.startswith("*.") for value in domains):
+                for wildcard in [value for value in domains if value.startswith("*.")]:
+                    base = wildcard[2:]
+                    if base not in domains: domains.insert(0, base)
+            valid_domain = lambda value: bool(HOST_RE.fullmatch(value[2:] if value.startswith("*.") else value))
+            if not domains or len(domains) > 100 or any(not valid_domain(value) for value in domains) or "@" not in email: self.send_json(400, {"error": "Domainliste oder E-Mail ungültig"}); return
             challenge, provider_id = body.get("challenge", "http-01"), body.get("provider_id")
+            if any(value.startswith("*.") for value in domains) and challenge != "dns-01": self.send_json(400, {"error": "Wildcard-Zertifikate benötigen DNS-01 und ein DNS-Plugin"}); return
             if challenge not in ("http-01", "dns-01") or challenge == "dns-01" and not provider_id: self.send_json(400, {"error": "Für DNS-01 muss ein DNS-Anbieter gewählt werden"}); return
-            threading.Thread(target=self.request_certificate, args=(domain, email, session["id"], challenge, provider_id), daemon=True).start()
-            self.send_json(202, {"status": "ACME-Anforderung gestartet"}); return
+            threading.Thread(target=self.request_certificate, args=(domains, email, session["id"], challenge, provider_id), daemon=True).start()
+            self.send_json(202, {"status": "ACME-Anforderung gestartet", "domains": domains}); return
         if path == "/api/apply":
             generate_nginx(); self.audit(session["id"], "nginx.apply"); self.send_json(200, {"ok": True, "message": "Konfiguration atomar geschrieben; Nginx-Watcher prüft und lädt neu."}); return
         self.send_json(404, {"error": "Nicht gefunden"})
 
-    def request_certificate(self, domain, email, user_id, challenge="http-01", provider_id=None):
-        with connect() as db: db.execute("INSERT INTO certificates(domain,email,status,challenge,provider_id,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(domain) DO UPDATE SET email=excluded.email,status='requesting',challenge=excluded.challenge,provider_id=excluded.provider_id,last_error=NULL", (domain, email, "requesting", challenge, provider_id, int(time.time())))
-        command = ["certbot", "certonly", "-d", domain, "--email", email, "--agree-tos", "--non-interactive", "--keep-until-expiring"]
+    def request_certificate(self, domains, email, user_id, challenge="http-01", provider_id=None):
+        domain = domains[0]; cert_name = next((value for value in domains if not value.startswith("*.")), domains[0].replace("*.", ""))
+        with connect() as db: db.execute("INSERT INTO certificates(domain,email,status,challenge,provider_id,domains_json,cert_name,created_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(domain) DO UPDATE SET email=excluded.email,status='requesting',challenge=excluded.challenge,provider_id=excluded.provider_id,domains_json=excluded.domains_json,cert_name=excluded.cert_name,last_error=NULL", (domain, email, "requesting", challenge, provider_id, json.dumps(domains), cert_name, int(time.time())))
+        command = ["certbot", "certonly", "--cert-name", cert_name, "--email", email, "--agree-tos", "--non-interactive", "--keep-until-expiring"] + [part for value in domains for part in ("-d", value)]
         environment = os.environ.copy(); credentials_file = None
         if challenge == "http-01": command += ["--webroot", "-w", str(ACME_WEBROOT)]
         else:
@@ -569,8 +580,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "powerdns": ("dns_pdns", {"PDNS_Url": credentials["api_url"], "PDNS_ServerId": credentials["server_id"], "PDNS_Token": credentials["api_token"], "PDNS_Ttl": str(credentials.get("ttl", 60))})
                 }
                 dns_hook, plugin_env = acme_plugins[provider["provider"]]; environment.update(plugin_env)
-                cert_dir = Path("/etc/letsencrypt/live") / domain; cert_dir.mkdir(parents=True, exist_ok=True)
-                command = ["/opt/acme.sh-3.1.2/acme.sh", "--home", "/data/acme-sh", "--server", "letsencrypt", "--issue", "--dns", dns_hook, "-d", domain, "--accountemail", email]
+                cert_dir = Path("/etc/letsencrypt/live") / cert_name; cert_dir.mkdir(parents=True, exist_ok=True)
+                command = ["/opt/acme.sh-3.1.2/acme.sh", "--home", "/data/acme-sh", "--server", "letsencrypt", "--issue", "--dns", dns_hook, "--accountemail", email] + [part for value in domains for part in ("-d", value)]
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=300, env=environment)
             status, error = ("issued", None) if result.returncode == 0 else ("failed", (result.stderr or result.stdout)[-2000:])
@@ -580,9 +591,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception as exc: status, error = "failed", str(exc)
         finally:
             if credentials_file: credentials_file.unlink(missing_ok=True)
-        with connect() as db: db.execute("UPDATE certificates SET status=?,last_error=? WHERE domain=?", (status, error, domain))
-        self.audit(user_id, "certificate." + status, domain)
-        if status == "failed": dispatch_notification("certificate", "ProxyDeck: Zertifikatsfehler", f"Domain: {domain}\nFehler: {error or 'Unbekannter ACME-Fehler'}")
+        expires_at = None
+        if status == "issued":
+            try:
+                decoded = ssl._ssl._test_decode_cert(str(Path("/etc/letsencrypt/live") / cert_name / "fullchain.pem"))
+                expires_at = int(ssl.cert_time_to_seconds(decoded["notAfter"]))
+            except Exception:
+                pass
+        with connect() as db: db.execute("UPDATE certificates SET status=?,last_error=?,expires_at=? WHERE domain=?", (status, error, expires_at, domain))
+        self.audit(user_id, "certificate." + status, ", ".join(domains))
+        if status == "failed": dispatch_notification("certificate", "ProxyDeck: Zertifikatsfehler", f"Domains: {', '.join(domains)}\nFehler: {error or 'Unbekannter ACME-Fehler'}")
 
     def serve_file(self, url_path):
         requested = "/index.html" if url_path == "/" else url_path

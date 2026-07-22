@@ -183,4 +183,32 @@ document.querySelectorAll("[data-manager]").forEach(link => link.addEventListene
     document.querySelectorAll(".notification-test").forEach(button=>button.addEventListener("click",async()=>{const password=window.prompt("Aktuelles ProxyDeck-Passwort für den Testversand:");if(password===null)return;try{await api("/api/notifications/test",{method:"POST",body:JSON.stringify({id:Number(button.dataset.id),current_password:password})});toast("Testnachricht gesendet","Der Kanal wurde erfolgreich angesprochen.")}catch(error){toast("Test fehlgeschlagen",error.message)}}));  } catch (error) { content.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`; }
 }));
 
+const certificateObserver = new MutationObserver(async () => {
+  const form = document.querySelector("#certForm");
+  if (!form || form.dataset.enhanced) return;
+  form.dataset.enhanced = "1";
+  const domainInput = form.elements.domain;
+  if (domainInput) {
+    const label = domainInput.closest("label");
+    label.classList.add("wide");
+    label.innerHTML = '<span>Domains / SANs</span><textarea name="domains" rows="3" placeholder="example.com, www.example.com, *.example.com" required></textarea><small>Mehrere Domains mit Komma, Leerzeichen oder Zeilenumbruch trennen. Wildcards benötigen DNS-01.</small>';
+  }
+  const challenge = form.elements.challenge;
+  challenge.options[1].textContent = "DNS-01 (für Wildcards)";
+  const syncWildcard = () => { if (form.elements.domains?.value.includes("*.")) challenge.value = "dns-01"; };
+  form.addEventListener("input", syncWildcard);
+  try {
+    const certificates = (await api("/api/certificates")).items;
+    const list = form.parentElement.querySelector(".manager-list");
+    const statusNames = { issued: "Gültig", requesting: "Wird angefordert", failed: "Fehler", pending: "Ausstehend" };
+    list.innerHTML = certificates.map(certificate => {
+      let domains;
+      try { domains = JSON.parse(certificate.domains_json || "null") || [certificate.domain]; } catch { domains = [certificate.domain]; }
+      const detail = certificate.status === "failed" ? certificate.last_error || "ACME-Anforderung fehlgeschlagen" : certificate.expires_at ? `Gültig bis ${new Date(certificate.expires_at * 1000).toLocaleDateString("de-DE")}` : "Kein Ablaufdatum gemeldet";
+      return `<div class="manager-row"><div><strong>${domains.map(escapeHtml).join(" · ")}</strong><small>${escapeHtml(certificate.email)} · ${escapeHtml((certificate.challenge || "http-01").toUpperCase())}</small></div><span class="tag">${escapeHtml(statusNames[certificate.status] || certificate.status)}</span><small>${escapeHtml(detail)}</small></div>`;
+    }).join("") || '<div class="empty-state">Noch keine Zertifikate vorhanden.</div>';
+  } catch (error) { toast("Zertifikate nicht geladen", error.message); }
+});
+certificateObserver.observe(document.querySelector("#managerContent"), { childList: true });
+
 loadBranding();restoreSession();
