@@ -215,6 +215,15 @@ def generate_nginx():
     }}
 }}
 """)
+            if ssl:
+                http_parts.append(f"""server {{
+    listen 80;
+    listen [::]:80;
+    server_name {proxy['domain']};
+    location ^~ /.well-known/acme-challenge/ {{ root /var/www/acme; }}
+    location / {{ return 308 https://$host$request_uri; }}
+}}
+""")
         for redirect in redirects:
             http_parts.append(f"server {{ listen 80; listen [::]:80; server_name {redirect['domain']}; return {redirect['code']} {redirect['target']}$request_uri; }}\n")
         stream_parts = ["# Generated stream routes\n"]
