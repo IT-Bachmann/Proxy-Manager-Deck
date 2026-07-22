@@ -198,6 +198,8 @@ Docker muss veröffentlichte Stream-Ports bereits beim Containerstart kennen. `c
 
 Administratoren können über den Button `Update` eine Aktualisierung vom konfigurierten GitHub-Remote starten. Der separate `updater`-Container führt ausschließlich `git fetch`, einen Fast-Forward-Merge und den Neuaufbau von Control, Gateway und Demo aus. Lokale Änderungen werden nicht überschrieben; in diesem Fall erscheint der Git-Fehler im Update-Protokoll.
 
+Der Updater prüft unmittelbar nach seinem Start und danach standardmäßig alle sechs Stunden auf neue Commits. Mit `PROXYDECK_UPDATE_CHECK_INTERVAL` kann das Intervall in Sekunden geändert werden, beispielsweise `3600` für stündliche Prüfungen. Der Button zeigt `Update verfügbar`, sobald der Remote-Stand neuer ist; ein Klick installiert dann nach Bestätigung. Bei `Aktuell` löst der Button lediglich eine erneute Prüfung aus.
+
 Der Updater benötigt Zugriff auf `/var/run/docker.sock` und besitzt dadurch administrative Kontrolle über Docker auf dem Host. Nur vertrauenswürdige Administratoren dürfen Zugriff auf ProxyDeck erhalten. Wer diesen Zugriff nicht erlauben möchte, entfernt den Dienst `updater` aus `compose.yml` und aktualisiert weiterhin manuell.
 
 Das Systemprotokoll befindet sich in der Oberfläche unter `Systemprotokoll`. Es enthält HTTP-Zugriffe ohne Request-Inhalte, Health-Statuswechsel, Nginx-Aktivierungen, ACME-Ergebnisse und Update-Ereignisse. Tokens und Passwörter werden nicht protokolliert. Die rotierenden Dateien liegen im persistenten Datenvolume unter `/data/proxydeck.log`.

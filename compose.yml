@@ -55,6 +55,7 @@ services:
     restart: unless-stopped
     environment:
       UPDATE_BRANCH: ${PROXYDECK_UPDATE_BRANCH:-main}
+      UPDATE_CHECK_INTERVAL: ${PROXYDECK_UPDATE_CHECK_INTERVAL:-21600}
       COMPOSE_PROJECT_NAME: proxy-manager-deck
     volumes:
       - ./:/workspace

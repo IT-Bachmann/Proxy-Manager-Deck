@@ -367,7 +367,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except OSError: status = "idle"
             try: update_log = (UPDATE_DIR / "update.log").read_text(encoding="utf-8", errors="replace").splitlines()[-120:]
             except OSError: update_log = []
-            self.send_json(200, {"status": status, "log": update_log}); return
+            def update_value(name, default=""):
+                try: return (UPDATE_DIR / name).read_text(encoding="utf-8").strip()
+                except OSError: return default
+            self.send_json(200, {"status": status, "log": update_log, "last_checked": int(update_value("last_checked", "0") or 0), "local_commit": update_value("local_commit")[:12], "remote_commit": update_value("remote_commit")[:12]}); return
         if path == "/api/system/status":
             if not self.require(): return
             try: update_status = (UPDATE_DIR / "status").read_text(encoding="utf-8").strip()
@@ -434,6 +437,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             (UPDATE_DIR / "status").write_text("queued", encoding="utf-8")
             LOGGER.info("update queued user=%s", session["username"]); self.audit(session["id"], "system.update_queued", session["username"])
             self.send_json(202, {"ok": True, "status": "queued"}); return
+        if path == "/api/update/check":
+            if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
+            UPDATE_DIR.mkdir(parents=True, exist_ok=True)
+            if (UPDATE_DIR / "status").exists() and (UPDATE_DIR / "status").read_text(encoding="utf-8").strip() in ("running", "queued"): self.send_json(409, {"error": "Während eines Updates ist keine Prüfung möglich"}); return
+            (UPDATE_DIR / "check").write_text(str(int(time.time())), encoding="utf-8"); (UPDATE_DIR / "status").write_text("checking", encoding="utf-8")
+            LOGGER.info("update check queued user=%s", session["username"]); self.send_json(202, {"ok": True, "status": "checking"}); return
         if path == "/api/account/password":
             current_password, new_password = body.get("current_password", ""), body.get("new_password", "")
             with connect() as db: user = db.execute("SELECT password_hash FROM users WHERE id=?", (session["id"],)).fetchone()

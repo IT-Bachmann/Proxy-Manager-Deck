@@ -4,13 +4,35 @@ mkdir -p /updates
 touch /updates/update.log
 chmod 777 /updates
 chmod 666 /updates/update.log
+git config --global --add safe.directory /workspace
+check_updates() {
+  printf 'checking' > /updates/status
+  if git -C /workspace fetch origin "${UPDATE_BRANCH:-main}" >> /updates/update.log 2>&1; then
+    local_commit=$(git -C /workspace rev-parse HEAD 2>/dev/null || true)
+    remote_commit=$(git -C /workspace rev-parse "origin/${UPDATE_BRANCH:-main}" 2>/dev/null || true)
+    printf '%s' "$local_commit" > /updates/local_commit
+    printf '%s' "$remote_commit" > /updates/remote_commit
+    date +%s > /updates/last_checked
+    if [ -n "$remote_commit" ] && [ "$local_commit" != "$remote_commit" ]; then
+      printf 'available' > /updates/status
+      date -u +'%Y-%m-%dT%H:%M:%SZ Neues Update verfügbar' >> /updates/update.log
+    else
+      printf 'current' > /updates/status
+      date -u +'%Y-%m-%dT%H:%M:%SZ Keine neuen Updates' >> /updates/update.log
+    fi
+  else
+    printf 'check_failed' > /updates/status
+    date +%s > /updates/last_checked
+    date -u +'%Y-%m-%dT%H:%M:%SZ Update-Prüfung fehlgeschlagen' >> /updates/update.log
+  fi
+  chmod 666 /updates/status /updates/last_checked /updates/local_commit /updates/remote_commit 2>/dev/null || true
+}
 while true; do
   if [ -f /updates/request ]; then
     rm -f /updates/request
     date -u +'%Y-%m-%dT%H:%M:%SZ UPDATE gestartet' >> /updates/update.log
     printf 'running' > /updates/status
     chmod 666 /updates/status
-    git config --global --add safe.directory /workspace
     date -u +'%Y-%m-%dT%H:%M:%SZ [1/4] GitHub-Änderungen abrufen' >> /updates/update.log
     if git -C /workspace fetch origin "${UPDATE_BRANCH:-main}" >> /updates/update.log 2>&1; then
       date -u +'%Y-%m-%dT%H:%M:%SZ [2/4] Fast-Forward-Merge prüfen' >> /updates/update.log
@@ -29,6 +51,9 @@ while true; do
     fi
     if docker compose -p "${COMPOSE_PROJECT_NAME:-proxy-manager-deck}" -f /workspace/compose.yml --project-directory /workspace up -d --force-recreate control gateway demo >> /updates/update.log 2>&1; then
       printf 'success' > /updates/status
+      git -C /workspace rev-parse HEAD > /updates/local_commit 2>/dev/null || true
+      git -C /workspace rev-parse HEAD > /updates/remote_commit 2>/dev/null || true
+      date +%s > /updates/last_checked
       date -u +'%Y-%m-%dT%H:%M:%SZ UPDATE erfolgreich' >> /updates/update.log
       date -u +'%Y-%m-%dT%H:%M:%SZ Updater wird auf die neue Version umgestellt' >> /updates/update.log
       docker compose -p "${COMPOSE_PROJECT_NAME:-proxy-manager-deck}" -f /workspace/compose.yml --project-directory /workspace up -d --force-recreate updater >> /updates/update.log 2>&1
@@ -36,6 +61,14 @@ while true; do
       printf 'failed' > /updates/status
       date -u +'%Y-%m-%dT%H:%M:%SZ UPDATE fehlgeschlagen' >> /updates/update.log
     fi
+  elif [ -f /updates/check ]; then
+    rm -f /updates/check
+    check_updates
+  else
+    now=$(date +%s)
+    last=$(cat /updates/last_checked 2>/dev/null || printf '0')
+    interval=${UPDATE_CHECK_INTERVAL:-21600}
+    if [ $((now - last)) -ge "$interval" ]; then check_updates; fi
   fi
   sleep 3
 done
