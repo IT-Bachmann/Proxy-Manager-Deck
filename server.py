@@ -18,6 +18,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 from email.message import EmailMessage
 from pathlib import Path
 from cryptography.fernet import Fernet, InvalidToken
@@ -80,6 +81,8 @@ def init_db():
         cert_columns = {row[1] for row in db.execute("PRAGMA table_info(certificates)")}
         if "challenge" not in cert_columns: db.execute("ALTER TABLE certificates ADD COLUMN challenge TEXT NOT NULL DEFAULT 'http-01'")
         if "provider_id" not in cert_columns: db.execute("ALTER TABLE certificates ADD COLUMN provider_id INTEGER REFERENCES acme_providers(id)")
+        proxy_columns = {row[1] for row in db.execute("PRAGMA table_info(proxy_hosts)")}
+        if "certificate_id" not in proxy_columns: db.execute("ALTER TABLE proxy_hosts ADD COLUMN certificate_id INTEGER REFERENCES certificates(id)")
         if not db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
             password = os.environ.get("PROXYDECK_ADMIN_PASSWORD")
             if not password or len(password) < 16:
@@ -180,7 +183,11 @@ def generate_nginx():
             http_parts.append(f"upstream {name} {{\n{balance}{chr(10).join(servers)}\n    keepalive 32;\n}}\n")
             ssl = bool(proxy["ssl_enabled"])
             listen = "    listen 443 ssl;\n    listen [::]:443 ssl;" if ssl else "    listen 80;\n    listen [::]:80;"
-            cert = f"\n    ssl_certificate /etc/letsencrypt/live/{proxy['domain']}/fullchain.pem;\n    ssl_certificate_key /etc/letsencrypt/live/{proxy['domain']}/privkey.pem;" if ssl else ""
+            cert_domain = proxy["domain"]
+            if ssl and proxy["certificate_id"]:
+                selected_cert = db.execute("SELECT domain FROM certificates WHERE id=? AND status='issued'", (proxy["certificate_id"],)).fetchone()
+                if selected_cert: cert_domain = selected_cert["domain"]
+            cert = f"\n    ssl_certificate /etc/letsencrypt/live/{cert_domain}/fullchain.pem;\n    ssl_certificate_key /etc/letsencrypt/live/{cert_domain}/privkey.pem;" if ssl else ""
             websocket = "\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection $connection_upgrade;" if proxy["websocket"] else ""
             http_parts.append(f"""server {{
 {listen}{cert}
@@ -223,6 +230,8 @@ def health_loop():
                         req = urllib.request.Request(url, method="GET", headers={"User-Agent": "ProxyDeck-Health/1.0"})
                         with urllib.request.urlopen(req, timeout=4) as response:
                             healthy = 1 if response.status < 500 else 0
+                    except urllib.error.HTTPError as error:
+                        healthy = 1 if error.code < 500 else 0
                     except Exception:
                         healthy = 0
                     latency = int((time.monotonic() - started) * 1000)
@@ -390,6 +399,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 db.execute("DELETE FROM sessions WHERE user_id=?", (session["id"],))
                 db.execute("INSERT INTO audit_log(user_id,action,detail,created_at) VALUES(?,?,?,?)", (session["id"], "account.password_changed", session["username"], int(time.time())))
             self.send_json(200, {"ok": True, "message": "Passwort geändert; alle Sitzungen wurden beendet"}, {"Set-Cookie": "proxydeck_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"}); return
+        if path == "/api/account/username":
+            username = body.get("username", "").strip(); current_password = body.get("current_password", "")
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{3,64}", username): self.send_json(400, {"error": "Benutzername: 3–64 Zeichen, nur Buchstaben, Zahlen, Punkt, Bindestrich und Unterstrich"}); return
+            with connect() as db: user = db.execute("SELECT password_hash FROM users WHERE id=?", (session["id"],)).fetchone()
+            if not user or not password_ok(current_password, user["password_hash"]): self.send_json(403, {"error": "Das aktuelle Passwort ist nicht korrekt"}); return
+            try:
+                with connect() as db: db.execute("UPDATE users SET username=? WHERE id=?", (username, session["id"]))
+                self.audit(session["id"], "account.username_changed", username); self.send_json(200, {"ok": True, "username": username})
+            except sqlite3.IntegrityError: self.send_json(409, {"error": "Dieser Benutzername ist bereits vergeben"})
+            return
         if path == "/api/logout":
             cookie = http.cookies.SimpleCookie(self.headers.get("cookie")); token = cookie.get("proxydeck_session")
             if token:
@@ -418,12 +437,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     if not valid_address(target["address"], target["family"]): raise ValueError()
                 with connect() as db:
                     host_id = body.get("id")
-                    values = (domain, body.get("scheme", "http"), port, int(bool(body.get("websocket", True))), body.get("strategy", "least_conn"), int(bool(body.get("ssl_enabled", False))), int(bool(body.get("enabled", True))))
+                    certificate_id = body.get("certificate_id") or None
+                    if certificate_id and not db.execute("SELECT 1 FROM certificates WHERE id=? AND status='issued'", (int(certificate_id),)).fetchone(): raise ValueError()
+                    values = (domain, body.get("scheme", "http"), port, int(bool(body.get("websocket", True))), body.get("strategy", "least_conn"), int(bool(body.get("ssl_enabled", False))), int(bool(body.get("enabled", True))), certificate_id)
                     if host_id:
-                        db.execute("UPDATE proxy_hosts SET domain=?,scheme=?,port=?,websocket=?,strategy=?,ssl_enabled=?,enabled=? WHERE id=?", values + (host_id,)); db.execute("DELETE FROM upstreams WHERE proxy_id=?", (host_id,))
+                        db.execute("UPDATE proxy_hosts SET domain=?,scheme=?,port=?,websocket=?,strategy=?,ssl_enabled=?,enabled=?,certificate_id=? WHERE id=?", values + (host_id,)); db.execute("DELETE FROM upstreams WHERE proxy_id=?", (host_id,))
                     else:
-                        cur = db.execute("INSERT INTO proxy_hosts(domain,scheme,port,websocket,strategy,ssl_enabled,enabled,created_at) VALUES(?,?,?,?,?,?,?,?)", values + (int(time.time()),)); host_id = cur.lastrowid
-                    for target in targets: db.execute("INSERT INTO upstreams(proxy_id,address,family,weight,mode,health_path) VALUES(?,?,?,?,?,?)", (host_id, target["address"], target["family"], max(1, min(100, int(target.get("weight", 100)))), target.get("mode", "active").lower(), target.get("health_path", "/")))
+                        cur = db.execute("INSERT INTO proxy_hosts(domain,scheme,port,websocket,strategy,ssl_enabled,enabled,certificate_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)", values + (int(time.time()),)); host_id = cur.lastrowid
+                    for target in targets:
+                        health_path = target.get("health_path", "/").strip() or "/"
+                        if not health_path.startswith("/") or len(health_path) > 512: raise ValueError()
+                        db.execute("INSERT INTO upstreams(proxy_id,address,family,weight,mode,health_path) VALUES(?,?,?,?,?,?)", (host_id, target["address"], target["family"], max(1, min(100, int(target.get("weight", 100)))), target.get("mode", "active").lower(), health_path))
                 generate_nginx(); self.audit(session["id"], "proxy.save", domain); self.send_json(200, {"ok": True, "id": host_id})
             except (ValueError, KeyError, sqlite3.IntegrityError) as error: self.send_json(400, {"error": "Domain, Port oder Zieladresse ist ungültig oder bereits vorhanden"})
             return

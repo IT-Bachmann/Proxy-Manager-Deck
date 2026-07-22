@@ -120,6 +120,25 @@ Nicht jede exotische Distribution kann automatisch unterstützt werden. Auf ande
 
 4. Dashboard über `http://127.0.0.1:8181` öffnen und als `admin` anmelden.
 
+### Passwort nach Wiederverwendung eines Docker-Volumes
+
+Wurde `.env` gelöscht oder neu erzeugt, bleibt im vorhandenen SQLite-Volume weiterhin der alte Passwort-Hash gespeichert. Die neue Umgebungsvariable ändert bestehende Benutzer nicht automatisch. Das Datenbankpasswort kann kontrolliert mit dem aktuellen Wert aus `.env` synchronisiert werden:
+
+```bash
+docker compose exec control python -c 'import os,sqlite3; from server import password_hash,DB; db=sqlite3.connect(DB); user=os.environ.get("PROXYDECK_ADMIN_USER","admin"); password=os.environ["PROXYDECK_ADMIN_PASSWORD"]; db.execute("UPDATE users SET password_hash=? WHERE username=?",(password_hash(password),user)); db.execute("DELETE FROM sessions"); db.commit(); print("Admin-Passwort aktualisiert:",user)'
+```
+
+Danach muss die Browser-Sitzung neu geladen und das Passwort aus `.env` verwendet werden. `proxydeck-login.txt` wird vom Installer bei jedem Lauf mit der erkannten IPv4 und IPv6 aktualisiert; `127.0.0.1` wird dort nicht mehr als Dashboard-Adresse gespeichert.
+
+Für ein interaktives Passwort-Reset steht außerdem ein Skript bereit:
+
+```bash
+chmod +x reset-password.sh
+./reset-password.sh
+```
+
+Das Skript fragt Benutzer und neues Passwort verdeckt ab, aktualisiert den SQLite-Hash, beendet alle Sitzungen und gleicht `.env` sowie `proxydeck-login.txt` ab.
+
 Das Dashboard bindet absichtlich nur an Loopback. Für einen entfernten Server empfiehlt sich zunächst ein SSH-Tunnel:
 
 ```bash

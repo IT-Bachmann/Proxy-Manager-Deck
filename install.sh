@@ -244,6 +244,22 @@ else
   warn ".env already exists; existing credentials were preserved."
 fi
 
+# Refresh addresses in the credentials note on every run without changing the password.
+if [ -f proxydeck-login.txt ]; then
+  login_tmp=$(mktemp "${TMPDIR:-/tmp}/proxydeck-login.XXXXXX")
+  {
+    printf 'ProxyDeck Dashboard IPv4: %s\n' "$dashboard_url"
+    printf 'ProxyDeck Demo IPv4: %s\n' "$demo_url"
+    if [ -n "$primary_ipv6" ]; then
+      printf 'ProxyDeck Dashboard IPv6: http://[%s]:8181\n' "$primary_ipv6"
+      printf 'ProxyDeck Demo IPv6: http://[%s]:45130\n' "$primary_ipv6"
+    fi
+    awk '!/^ProxyDeck Dashboard/ && !/^ProxyDeck Demo/ && !/^Remote-Zugriff:/' proxydeck-login.txt
+  } > "$login_tmp"
+  mv "$login_tmp" proxydeck-login.txt
+  chmod 600 proxydeck-login.txt
+fi
+
 say "Validating Docker Compose configuration"
 $COMPOSE config --quiet
 
