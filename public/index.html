@@ -28,6 +28,7 @@
           <a href="#" data-manager="users"><span class="nav-icon">♙</span>Benutzer</a>
           <a href="#" data-manager="notifications"><span class="nav-icon">♢</span>Benachrichtigungen</a>
           <a href="#" data-manager="audit"><span class="nav-icon">▤</span>Aktivitäten</a>
+          <a href="#" data-manager="logs"><span class="nav-icon">≡</span>Systemprotokoll</a>
           <a href="#" data-manager="traffic"><span class="nav-icon">↗</span>Traffic &amp; Hits</a>
           <a href="#" data-manager="branding"><span class="nav-icon">⚙</span>Design</a>
         </nav>
@@ -41,7 +42,7 @@
         <header class="topbar">
           <button class="menu-button" aria-label="Menü öffnen">☰</button>
           <div class="breadcrumbs"><span>Proxy Hosts</span><i>/</i><strong>Neu</strong></div>
-          <div class="top-actions"><button class="icon-button" id="refreshButton" title="Daten aktualisieren" aria-label="Daten aktualisieren">↻</button><button class="icon-button" id="themeToggle" title="Dunkelmodus einschalten" aria-label="Darstellung wechseln">☾</button></div>
+          <div class="top-actions"><button class="button update-button" id="updateButton" title="Von GitHub aktualisieren">⬆ Update</button><button class="icon-button" id="refreshButton" title="Daten aktualisieren" aria-label="Daten aktualisieren">↻</button><button class="icon-button" id="themeToggle" title="Dunkelmodus einschalten" aria-label="Darstellung wechseln">☾</button></div>
         </header>
 
         <section class="content">
@@ -92,6 +93,6 @@
     <dialog id="hostDialog" class="manager-dialog host-dialog"><div class="dialog-head"><div><h2 id="hostDialogTitle">Proxy Host bearbeiten</h2><p>Domain, Zertifikat und Upstream-Ziele</p></div><button id="closeHostDialog">×</button></div><form id="hostModalForm" class="manager-content"></form></dialog>
     <div class="login-screen" id="loginScreen"><div class="login-book" aria-hidden="true"><span class="book-back"></span><span class="book-pages"></span><span class="book-cover"><i class="logo">P</i></span></div><form class="login-card" id="loginForm"><div class="login-brand"><span class="logo">P</span><img class="custom-logo" alt="" /><strong>proxydeck</strong></div><h1>Willkommen zurück</h1><p>Melde dich an, um dein Gateway zu verwalten.</p><label><span>Benutzername</span><input id="loginUser" autocomplete="username" value="admin" required /></label><label><span>Passwort</span><input id="loginPassword" type="password" autocomplete="current-password" required /></label><div class="login-error" id="loginError"></div><button class="button primary" type="submit">Sicher anmelden</button><small>Der erste Zugang wird über die Docker-Umgebung festgelegt.</small></form></div>
     <div class="toast" id="toast"><span>✓</span><div><strong>Gespeichert</strong><small>Die Konfiguration wurde erfolgreich geprüft.</small></div></div>
-    <script src="/app.js?v=20260722-3"></script>
+    <script src="/app.js?v=20260722-4"></script>
   </body>
 </html>

@@ -194,6 +194,14 @@ Docker muss veröffentlichte Stream-Ports bereits beim Containerstart kennen. `c
 
 ## Produktionshinweise
 
+## Updates und Systemprotokoll
+
+Administratoren können über den Button `Update` eine Aktualisierung vom konfigurierten GitHub-Remote starten. Der separate `updater`-Container führt ausschließlich `git fetch`, einen Fast-Forward-Merge und den Neuaufbau von Control, Gateway und Demo aus. Lokale Änderungen werden nicht überschrieben; in diesem Fall erscheint der Git-Fehler im Update-Protokoll.
+
+Der Updater benötigt Zugriff auf `/var/run/docker.sock` und besitzt dadurch administrative Kontrolle über Docker auf dem Host. Nur vertrauenswürdige Administratoren dürfen Zugriff auf ProxyDeck erhalten. Wer diesen Zugriff nicht erlauben möchte, entfernt den Dienst `updater` aus `compose.yml` und aktualisiert weiterhin manuell.
+
+Das Systemprotokoll befindet sich in der Oberfläche unter `Systemprotokoll`. Es enthält HTTP-Zugriffe ohne Request-Inhalte, Health-Statuswechsel, Nginx-Aktivierungen, ACME-Ergebnisse und Update-Ereignisse. Tokens und Passwörter werden nicht protokolliert. Die rotierenden Dateien liegen im persistenten Datenvolume unter `/data/proxydeck.log`.
+
 Dieses MVP besitzt bereits echte Persistenz und Nginx-Aktivierung, benötigt vor öffentlichem Produktionseinsatz aber zusätzlich Härtung: Dashboard über HTTPS, Firewall, regelmäßige Volume-Backups, Rate-Limits am Login, automatisierte Integrationstests und eine unprivilegierte ACME-Sidecar-Ausführung. `PROXYDECK_SECURE_COOKIE=1` erst aktivieren, wenn das Dashboard ausschließlich per HTTPS erreichbar ist.
 
 Die Verwaltungsoberfläche und die Offline-Demo besitzen Breakpoints für Desktop, Tablet und Smartphone. Tabellen bleiben mobil scrollbar, Formulare werden einspaltig und die Navigation wird als mobiles Menü geöffnet.

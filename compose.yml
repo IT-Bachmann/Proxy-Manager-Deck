@@ -15,6 +15,7 @@ services:
       - letsencrypt:/etc/letsencrypt
       - acme_webroot:/var/www/acme
       - traffic_logs:/logs:ro
+      - update_control:/updates
     networks: [edge]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/', timeout=2)"]
@@ -49,6 +50,16 @@ services:
       - ./demo:/usr/share/nginx/html:ro
     networks: [edge]
 
+  updater:
+    build: ./updater
+    restart: unless-stopped
+    environment:
+      UPDATE_BRANCH: ${PROXYDECK_UPDATE_BRANCH:-main}
+    volumes:
+      - ./:/workspace
+      - update_control:/updates
+      - /var/run/docker.sock:/var/run/docker.sock
+
 networks:
   edge:
     enable_ipv6: true
@@ -62,3 +73,4 @@ volumes:
   letsencrypt:
   acme_webroot:
   traffic_logs:
+  update_control:

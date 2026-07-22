@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl openssl ca
 WORKDIR /app
 COPY server.py ./
 COPY public ./public
-RUN useradd -r -u 10001 proxydeck && mkdir -p /data /generated /var/www/acme && chown -R proxydeck:proxydeck /app /data /generated /var/www/acme
+RUN useradd -r -u 10001 proxydeck && mkdir -p /data /generated /var/www/acme /updates && chown -R proxydeck:proxydeck /app /data /generated /var/www/acme /updates
 ENV PORT=3000 PROXYDECK_DATA=/data PROXYDECK_CONFIG=/generated PROXYDECK_ACME_WEBROOT=/var/www/acme
 EXPOSE 3000
 CMD ["python", "server.py"]

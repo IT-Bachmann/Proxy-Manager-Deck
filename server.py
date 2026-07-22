@@ -5,6 +5,8 @@ import http.cookies
 import http.server
 import ipaddress
 import json
+import logging
+from logging.handlers import RotatingFileHandler
 import os
 import re
 import secrets
@@ -30,6 +32,7 @@ GENERATED = Path(os.environ.get("PROXYDECK_CONFIG", ROOT / "generated"))
 ACME_WEBROOT = Path(os.environ.get("PROXYDECK_ACME_WEBROOT", ROOT / "acme-webroot"))
 DB = DATA / "proxydeck.db"
 ACCESS_LOG = Path(os.environ.get("PROXYDECK_ACCESS_LOG", "/logs/access.log"))
+UPDATE_DIR = Path(os.environ.get("PROXYDECK_UPDATE_DIR", "/updates"))
 PORT = int(os.environ.get("PORT", "3000"))
 SESSION_TTL = 60 * 60 * 12
 HOST_RE = re.compile(r"^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$")
@@ -37,6 +40,12 @@ MIME = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", 
 
 for directory in (DATA, GENERATED, ACME_WEBROOT):
     directory.mkdir(parents=True, exist_ok=True)
+LOGGER = logging.getLogger("proxydeck")
+LOGGER.setLevel(logging.INFO)
+if not LOGGER.handlers:
+    handler = RotatingFileHandler(DATA / "proxydeck.log", maxBytes=2_000_000, backupCount=5, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    LOGGER.addHandler(handler)
 
 
 def connect():
@@ -240,6 +249,7 @@ def health_loop():
                     db.execute("UPDATE upstreams SET healthy=?,latency_ms=?,checked_at=? WHERE id=?", (healthy, latency, int(time.time()), target["id"]))
                     if target["healthy"] is not None and int(target["healthy"]) != healthy:
                         changes.append(("up" if healthy else "down", target["address"], latency))
+                        LOGGER.warning("health state=%s target=%s latency_ms=%s", "up" if healthy else "down", target["address"], latency)
                 db.commit()
             for event, address, latency in changes:
                 state = "wieder erreichbar" if event == "up" else "nicht erreichbar"
@@ -343,6 +353,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             session = self.require()
             if session: self.send_json(200, {"user": {"id": session["id"], "username": session["username"], "role": session["role"]}, "csrf": session["csrf"]})
             return
+        if path == "/api/logs":
+            session = self.require(("admin",))
+            if not session: return
+            try: lines = (DATA / "proxydeck.log").read_text(encoding="utf-8", errors="replace").splitlines()[-500:]
+            except OSError: lines = []
+            self.send_json(200, {"items": lines}); return
+        if path == "/api/update/status":
+            session = self.require(("admin",))
+            if not session: return
+            try: status = (UPDATE_DIR / "status").read_text(encoding="utf-8").strip()
+            except OSError: status = "idle"
+            try: update_log = (UPDATE_DIR / "update.log").read_text(encoding="utf-8", errors="replace").splitlines()[-120:]
+            except OSError: update_log = []
+            self.send_json(200, {"status": status, "log": update_log}); return
         if path == "/api/proxy-hosts":
             if not self.require(): return
             with connect() as db:
@@ -391,6 +415,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_json(200, {"user": {"username": user["username"], "role": user["role"]}, "csrf": csrf}, {"Set-Cookie": f"proxydeck_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}{secure}"}); return
         session = self.require(("admin", "operator"), csrf=True)
         if not session: return
+        if path == "/api/update":
+            if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
+            UPDATE_DIR.mkdir(parents=True, exist_ok=True)
+            if (UPDATE_DIR / "status").exists() and (UPDATE_DIR / "status").read_text(encoding="utf-8").strip() == "running": self.send_json(409, {"error": "Ein Update läuft bereits"}); return
+            (UPDATE_DIR / "request").write_text(str(int(time.time())), encoding="utf-8")
+            (UPDATE_DIR / "status").write_text("queued", encoding="utf-8")
+            LOGGER.info("update queued user=%s", session["username"]); self.audit(session["id"], "system.update_queued", session["username"])
+            self.send_json(202, {"ok": True, "status": "queued"}); return
         if path == "/api/account/password":
             current_password, new_password = body.get("current_password", ""), body.get("new_password", "")
             with connect() as db: user = db.execute("SELECT password_hash FROM users WHERE id=?", (session["id"],)).fetchone()
@@ -544,7 +576,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             threading.Thread(target=self.request_certificate, args=(domains, email, session["id"], challenge, provider_id), daemon=True).start()
             self.send_json(202, {"status": "ACME-Anforderung gestartet", "domains": domains}); return
         if path == "/api/apply":
-            generate_nginx(); self.audit(session["id"], "nginx.apply"); self.send_json(200, {"ok": True, "message": "Konfiguration atomar geschrieben; Nginx-Watcher prüft und lädt neu."}); return
+            generate_nginx(); LOGGER.info("nginx configuration generated user=%s", session["username"]); self.audit(session["id"], "nginx.apply"); self.send_json(200, {"ok": True, "message": "Konfiguration atomar geschrieben; Nginx-Watcher prüft und lädt neu."}); return
         self.send_json(404, {"error": "Nicht gefunden"})
 
     def request_certificate(self, domains, email, user_id, challenge="http-01", provider_id=None):
@@ -600,6 +632,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 pass
         with connect() as db: db.execute("UPDATE certificates SET status=?,last_error=?,expires_at=? WHERE domain=?", (status, error, expires_at, domain))
         self.audit(user_id, "certificate." + status, ", ".join(domains))
+        LOGGER.info("certificate status=%s domains=%s error=%s", status, ",".join(domains), (error or "-").replace("\n", " ")[:500])
         if status == "failed": dispatch_notification("certificate", "ProxyDeck: Zertifikatsfehler", f"Domains: {', '.join(domains)}\nFehler: {error or 'Unbekannter ACME-Fehler'}")
 
     def serve_file(self, url_path):
@@ -611,11 +644,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except OSError: self.send_error(404); return
         self.send_response(200); self.send_header("Content-Type", MIME.get(file.suffix, "application/octet-stream")); self.send_header("Content-Length", str(len(data))); self.send_header("X-Frame-Options", "DENY"); self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:"); self.end_headers(); self.wfile.write(data)
 
-    def log_message(self, fmt, *args): print(time.strftime("%Y-%m-%d %H:%M:%S"), self.address_string(), fmt % args)
+    def log_message(self, fmt, *args):
+        message = fmt % args
+        LOGGER.info("http client=%s method=%s path=%s result=%s", self.address_string(), self.command, urllib.parse.urlparse(self.path).path, message)
+        print(time.strftime("%Y-%m-%d %H:%M:%S"), self.address_string(), message)
 
 
 if __name__ == "__main__":
-    init_db(); generate_nginx()
+    init_db(); generate_nginx(); LOGGER.info("ProxyDeck started port=%s", PORT)
     threading.Thread(target=health_loop, daemon=True).start()
     threading.Thread(target=renewal_loop, daemon=True).start()
     threading.Thread(target=traffic_loop, daemon=True).start()
