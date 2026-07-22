@@ -13,8 +13,8 @@ while true; do
     git config --global --add safe.directory /workspace
     if git -C /workspace fetch origin "${UPDATE_BRANCH:-main}" >> /updates/update.log 2>&1 \
       && git -C /workspace merge --ff-only "origin/${UPDATE_BRANCH:-main}" >> /updates/update.log 2>&1 \
-      && docker compose -f /workspace/compose.yml --project-directory /workspace build control gateway demo >> /updates/update.log 2>&1 \
-      && docker compose -f /workspace/compose.yml --project-directory /workspace up -d --force-recreate control gateway demo >> /updates/update.log 2>&1; then
+      && docker compose -p "${COMPOSE_PROJECT_NAME:-proxy-manager-deck}" -f /workspace/compose.yml --project-directory /workspace build control gateway demo >> /updates/update.log 2>&1 \
+      && docker compose -p "${COMPOSE_PROJECT_NAME:-proxy-manager-deck}" -f /workspace/compose.yml --project-directory /workspace up -d --force-recreate control gateway demo >> /updates/update.log 2>&1; then
       printf 'success' > /updates/status
       date -u +'%Y-%m-%dT%H:%M:%SZ UPDATE erfolgreich' >> /updates/update.log
     else

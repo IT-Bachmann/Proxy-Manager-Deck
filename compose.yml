@@ -1,3 +1,5 @@
+name: proxy-manager-deck
+
 services:
   control:
     build: .
@@ -55,6 +57,7 @@ services:
     restart: unless-stopped
     environment:
       UPDATE_BRANCH: ${PROXYDECK_UPDATE_BRANCH:-main}
+      COMPOSE_PROJECT_NAME: proxy-manager-deck
     volumes:
       - ./:/workspace
       - update_control:/updates
