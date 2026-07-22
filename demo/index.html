@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="demo.css?v=20260722-3">
   <link rel="stylesheet" href="palette.css?v=20260722-1">
   <link rel="stylesheet" href="book3d.css?v=20260722-1">
+  <link rel="stylesheet" href="updater-demo.css?v=20260722-1">
 </head>
 <body>
   <div class="shell">
@@ -33,19 +34,21 @@
     </aside>
 
     <main>
-      <header><button class="mobile-menu" id="mobileMenu">☰</button><div><span>ProxyDeck</span><i>/</i><strong id="crumb">Übersicht</strong></div><div class="header-actions"><button title="Demo-Daten zurücksetzen" aria-label="Demo-Daten zurücksetzen" id="reset">↻</button><button title="Dunkelmodus einschalten" aria-label="Darstellung wechseln" id="themeToggle">☾</button></div></header>
+      <header><button class="mobile-menu" id="mobileMenu">☰</button><div><span>ProxyDeck</span><i>/</i><strong id="crumb">Übersicht</strong></div><div class="header-actions"><button class="demo-update-button" title="Update-Ablauf simulieren" id="demoUpdateButton">Update prüfen</button><button title="Demo-Daten zurücksetzen" aria-label="Demo-Daten zurücksetzen" id="reset">↻</button><button title="Dunkelmodus einschalten" aria-label="Darstellung wechseln" id="themeToggle">☾</button></div></header>
       <div class="page" id="page"></div>
     </main>
   </div>
 
   <dialog id="modal"><form method="dialog" class="modal-card"><div class="modal-head"><div><h2 id="modalTitle"></h2><p id="modalSubtitle"></p></div><button value="cancel">×</button></div><div class="modal-body" id="modalBody"></div><div class="modal-actions"><button value="cancel" class="btn secondary">Abbrechen</button><button type="button" class="btn primary" id="modalSave">Speichern</button></div></form></dialog>
+  <dialog id="demoUpdateDialog" class="demo-update-dialog"><div class="modal-head"><div><h2>ProxyDeck Update</h2><p>Simulierter GitHub- und Docker-Ablauf</p></div><button id="demoUpdateClose">×</button></div><div class="demo-update-content"><section class="demo-update-current"><div class="demo-update-head"><span id="demoUpdateDot"></span><div><small>AKTUELLER STATUS</small><strong id="demoUpdateStatus">Bereit</strong></div><b id="demoUpdatePercent">0 %</b></div><div class="demo-update-progress"><i id="demoUpdateBar"></i></div><div class="demo-update-step"><small id="demoUpdateStepNumber">STATUS</small><strong id="demoUpdateStep">Update kann gestartet werden</strong></div></section></div></dialog>
   <div class="toast" id="toast"><span>✓</span><div><strong></strong><small></small></div></div>
   <div class="login" id="login"><div class="login-book" aria-hidden="true"><span class="book-back"></span><span class="book-pages"></span><span class="book-cover"><i class="logo">P</i></span></div><form id="loginForm"><div class="login-brand"><span class="logo">P</span><strong>proxydeck</strong></div><span class="demo-pill">INTERAKTIVE DEMO</span><h1>Willkommen zurück</h1><p>Erkunde alle Funktionen der ProxyDeck-Oberfläche.</p><label>Benutzername<input id="demoLoginUser" value="admin" required></label><label>Passwort<input id="demoLoginPassword" type="password" value="proxydeck-demo" required></label><div class="login-error" id="demoLoginError"></div><small>Demo-Zugang: admin / proxydeck-demo</small><button class="btn primary">Anmelden</button></form></div>
   <script src="providers.js"></script>
   <script src="notifications.js"></script>
   <script>window.applyDemoPalette=()=>{};</script>
   <script src="demo.js?v=20260722-3"></script>
-  <script src="palette.js?v=20260722-1"></script>
+  <script src="palette.js?v=20260722-2"></script>
+  <script src="updater-demo.js?v=20260722-1"></script>
   <script src="theme.js"></script>
 </body>
 </html>
