@@ -2,8 +2,6 @@
 
 > Das Projekt hieß in der frühen Entwicklungsphase „Relaydeck“. Hinweise für bestehende Testinstallationen stehen in [`MIGRATION_TO_PROXYDECK.md`](MIGRATION_TO_PROXYDECK.md).
 
-> **Early preview:** ProxyDeck is under active development and has not yet received an independent security audit. Test backups and provider integrations before production use.
-
 ProxyDeck ist eine eigenständige Reverse-Proxy-Verwaltung mit mehreren IPv4-/IPv6-Upstreams pro Domain. Das Repository enthält ein ausführbares Docker-MVP, nicht nur ein Design-Mockup.
 
 ## Funktionen
@@ -28,82 +26,6 @@ ProxyDeck ist eine eigenständige Reverse-Proxy-Verwaltung mit mehreren IPv4-/IP
 
 ## Schnellstart
 
-### Von GitHub auf den Server laden
-
-Offizielles Repository: [IT-Bachmann/Proxy-Manager-Deck](https://github.com/IT-Bachmann/Proxy-Manager-Deck)
-
-Mit Git:
-
-```bash
-git clone https://github.com/IT-Bachmann/Proxy-Manager-Deck.git
-cd Proxy-Manager-Deck
-chmod +x install.sh
-sudo ./install.sh
-```
-
-Ohne Git mit `curl`:
-
-```bash
-curl -fsSL https://github.com/IT-Bachmann/Proxy-Manager-Deck/archive/refs/heads/main.tar.gz -o proxydeck.tar.gz
-tar -xzf proxydeck.tar.gz
-cd Proxy-Manager-Deck-main
-chmod +x install.sh
-sudo ./install.sh
-```
-
-Oder mit `wget`:
-
-```bash
-wget -O proxydeck.tar.gz https://github.com/IT-Bachmann/Proxy-Manager-Deck/archive/refs/heads/main.tar.gz
-tar -xzf proxydeck.tar.gz
-cd Proxy-Manager-Deck-main
-chmod +x install.sh
-sudo ./install.sh
-```
-
-Die Zugangsdaten erscheinen bei der ersten Installation einmal im Terminal und werden zusätzlich mit Dateirechten `0600` in `proxydeck-login.txt` gespeichert. Anzeigen:
-
-```bash
-sudo cat proxydeck-login.txt
-```
-
-Die vollständige interne Konfiguration liegt in `.env`. Beide Dateien dürfen niemals auf GitHub hochgeladen oder weitergegeben werden.
-
-### Automatische Linux-Installation
-
-Auf einem unterstützten Linux-System kann ProxyDeck inklusive Docker-Vorbereitung installiert werden:
-
-```bash
-chmod +x install.sh
-sudo ./install.sh
-```
-
-Unterstützt werden Paketmanager-basierte Installationen auf:
-
-- Debian und Ubuntu
-- Fedora, RHEL, Rocky Linux und AlmaLinux
-- openSUSE und SUSE Linux Enterprise
-- Arch Linux und Derivate
-- Alpine Linux
-
-Das Skript verwendet ausschließlich den vorhandenen Paketmanager, erzeugt `.env` mit sicheren Zufallswerten, validiert Docker Compose und startet die Container. Wenn Docker bereits separat verwaltet wird:
-
-Vor dem Start prüft es außerdem Architektur, freien Speicherplatz, Docker-Daemon, Compose-Version, die Ports 80/443/8181, IPv6 sowie aktive UFW-/firewalld-Konfigurationen. Nach dem Start wartet es bis zu 60 Sekunden auf eine echte HTTP-Antwort des Dashboards und zeigt bei Fehlern die letzten Container-Logs.
-
-```bash
-./install.sh --skip-docker-install
-```
-
-Nur vorbereiten, aber noch nicht starten:
-
-```bash
-sudo ./install.sh --no-start
-```
-
-Nicht jede exotische Distribution kann automatisch unterstützt werden. Auf anderen Linux-Systemen Docker Engine 24+ und Docker Compose v2 installieren und anschließend das Skript mit `--skip-docker-install` ausführen.
-
-### Manuelle Installation
-
 1. Umgebung anlegen:
 
    ```bash
@@ -122,22 +44,11 @@ Nicht jede exotische Distribution kann automatisch unterstützt werden. Auf ande
 
 ### Passwort nach Wiederverwendung eines Docker-Volumes
 
-Wurde `.env` gelöscht oder neu erzeugt, bleibt im vorhandenen SQLite-Volume weiterhin der alte Passwort-Hash gespeichert. Die neue Umgebungsvariable ändert bestehende Benutzer nicht automatisch. Das Datenbankpasswort kann kontrolliert mit dem aktuellen Wert aus `.env` synchronisiert werden:
+Wenn `.env` neu erstellt wurde, aber das SQLite-Docker-Volume erhalten blieb, muss der vorhandene Benutzer einmal mit dem aktuellen Passwort synchronisiert werden:
 
 ```bash
-docker compose exec control python -c 'import os,sqlite3; from server import password_hash,DB; db=sqlite3.connect(DB); user=os.environ.get("PROXYDECK_ADMIN_USER","admin"); password=os.environ["PROXYDECK_ADMIN_PASSWORD"]; db.execute("UPDATE users SET password_hash=? WHERE username=?",(password_hash(password),user)); db.execute("DELETE FROM sessions"); db.commit(); print("Admin-Passwort aktualisiert:",user)'
+docker compose exec control python -c 'import os,sqlite3; from server import password_hash,DB; db=sqlite3.connect(DB); user=os.environ.get("PROXYDECK_ADMIN_USER","admin"); password=os.environ["PROXYDECK_ADMIN_PASSWORD"]; db.execute("UPDATE users SET password_hash=? WHERE username=?",(password_hash(password),user)); db.execute("DELETE FROM sessions"); db.commit()'
 ```
-
-Danach muss die Browser-Sitzung neu geladen und das Passwort aus `.env` verwendet werden. `proxydeck-login.txt` wird vom Installer bei jedem Lauf mit der erkannten IPv4 und IPv6 aktualisiert; `127.0.0.1` wird dort nicht mehr als Dashboard-Adresse gespeichert.
-
-Für ein interaktives Passwort-Reset steht außerdem ein Skript bereit:
-
-```bash
-chmod +x reset-password.sh
-./reset-password.sh
-```
-
-Das Skript fragt Benutzer und neues Passwort verdeckt ab, aktualisiert den SQLite-Hash, beendet alle Sitzungen und gleicht `.env` sowie `proxydeck-login.txt` ab.
 
 Das Dashboard bindet absichtlich nur an Loopback. Für einen entfernten Server empfiehlt sich zunächst ein SSH-Tunnel:
 
@@ -194,16 +105,6 @@ Docker muss veröffentlichte Stream-Ports bereits beim Containerstart kennen. `c
 
 ## Produktionshinweise
 
-## Updates und Systemprotokoll
-
-Administratoren können über den Button `Update` eine Aktualisierung vom konfigurierten GitHub-Remote starten. Der separate `updater`-Container führt ausschließlich `git fetch`, einen Fast-Forward-Merge und den Neuaufbau von Control, Gateway und Demo aus. Lokale Änderungen werden nicht überschrieben; in diesem Fall erscheint der Git-Fehler im Update-Protokoll.
-
-Der Updater prüft unmittelbar nach seinem Start und danach standardmäßig alle sechs Stunden auf neue Commits. Mit `PROXYDECK_UPDATE_CHECK_INTERVAL` kann das Intervall in Sekunden geändert werden, beispielsweise `3600` für stündliche Prüfungen. Der Button zeigt `Update verfügbar`, sobald der Remote-Stand neuer ist; ein Klick installiert dann nach Bestätigung. Bei `Aktuell` löst der Button lediglich eine erneute Prüfung aus.
-
-Der Updater benötigt Zugriff auf `/var/run/docker.sock` und besitzt dadurch administrative Kontrolle über Docker auf dem Host. Nur vertrauenswürdige Administratoren dürfen Zugriff auf ProxyDeck erhalten. Wer diesen Zugriff nicht erlauben möchte, entfernt den Dienst `updater` aus `compose.yml` und aktualisiert weiterhin manuell.
-
-Das Systemprotokoll befindet sich in der Oberfläche unter `Systemprotokoll`. Es enthält HTTP-Zugriffe ohne Request-Inhalte, Health-Statuswechsel, Nginx-Aktivierungen, ACME-Ergebnisse und Update-Ereignisse. Tokens und Passwörter werden nicht protokolliert. Die rotierenden Dateien liegen im persistenten Datenvolume unter `/data/proxydeck.log`.
-
 Dieses MVP besitzt bereits echte Persistenz und Nginx-Aktivierung, benötigt vor öffentlichem Produktionseinsatz aber zusätzlich Härtung: Dashboard über HTTPS, Firewall, regelmäßige Volume-Backups, Rate-Limits am Login, automatisierte Integrationstests und eine unprivilegierte ACME-Sidecar-Ausführung. `PROXYDECK_SECURE_COOKIE=1` erst aktivieren, wenn das Dashboard ausschließlich per HTTPS erreichbar ist.
 
 Die Verwaltungsoberfläche und die Offline-Demo besitzen Breakpoints für Desktop, Tablet und Smartphone. Tabellen bleiben mobil scrollbar, Formulare werden einspaltig und die Navigation wird als mobiles Menü geöffnet.
@@ -215,7 +116,3 @@ Die Verwaltungsoberfläche und die Offline-Demo besitzen Breakpoints für Deskto
 - `gateway/` – Nginx-Gateway mit geprüftem Auto-Reload
 - `compose.yml` – Control Plane, Gateway und Demo-Dienst
 - `demo/index.html` – Test-Webseite
-
-## Lizenz
-
-ProxyDeck wird unter der [MIT License](LICENSE) veröffentlicht.

@@ -86,3 +86,20 @@ dialog.manager-dialog.update-dialog,dialog.manager-dialog.update-dialog .manager
 @keyframes book3dOpen{0%{transform:translateZ(8px) rotateY(0)}22%{transform:translateZ(8px) rotateY(4deg)}100%{transform:translateZ(8px) rotateY(-132deg)}}
 @media(max-width:720px){.login-book{width:min(94vw,118vh)!important;filter:drop-shadow(0 24px 22px #0008)}.login-book>span{inset:8% 3%}.book-cover:before{bottom:12%;font-size:clamp(12px,4vw,22px)}.book-cover .logo{border-radius:16px!important}}
 @media(prefers-reduced-motion:reduce){.closing .login-book,.opening .login-book,.closing .book-cover,.opening .book-cover{animation-duration:.01ms!important;animation-delay:0s!important}}
+
+/* Vollbild-Wirbel für Anmelden und Abmelden */
+.login-book{inset:50% auto auto 50%!important;width:min(92vmin,920px)!important;height:min(92vmin,920px)!important;aspect-ratio:1!important;border-radius:50%!important;filter:drop-shadow(0 0 42px color-mix(in srgb,var(--brand) 55%,transparent))!important;transform:translate(-50%,-50%)!important;perspective:none!important}
+.login-book>span{inset:0!important;border:0!important;border-radius:50%!important;box-shadow:none!important;backface-visibility:visible!important;transform-origin:center!important}
+.login-book .book-back,.login-book .book-pages,.login-book .book-cover{background:conic-gradient(from 0deg,transparent 0 8%,color-mix(in srgb,var(--brand) 88%,#fff) 13%,transparent 22% 42%,var(--brand-dark) 50%,transparent 60% 78%,var(--brand) 86%,transparent 96%)!important;border:clamp(3px,.7vmin,8px) solid color-mix(in srgb,var(--brand) 48%,transparent)!important;box-shadow:inset 0 0 55px color-mix(in srgb,var(--brand) 38%,transparent),0 0 30px color-mix(in srgb,var(--brand) 30%,transparent)!important}
+.login-book .book-back{inset:3%!important;animation:vortexSpin 2.6s linear infinite!important}
+.login-book .book-pages{inset:17%!important;animation:vortexSpin 1.8s linear infinite reverse!important}
+.login-book .book-cover{inset:32%!important;display:block!important;animation:vortexSpin 1.15s linear infinite!important}
+.login-book .book-pages:before,.login-book .book-pages:after,.login-book .book-cover:before,.login-book .book-cover:after{content:none!important;display:none!important}
+.login-book .book-cover .logo{position:absolute!important;inset:50% auto auto 50%!important;width:clamp(54px,10vmin,100px)!important;height:clamp(54px,10vmin,100px)!important;border-radius:50%!important;transform:translate(-50%,-50%)!important;display:grid!important;place-items:center!important;box-shadow:0 0 45px var(--brand)!important}
+.closing .login-book{animation:vortexIn .9s cubic-bezier(.16,.8,.25,1) forwards!important}.opening .login-book{animation:vortexOut .9s cubic-bezier(.16,.8,.25,1) forwards!important}
+.closing .book-cover,.opening .book-cover{animation:vortexSpin 1.15s linear infinite!important}
+@keyframes vortexSpin{to{rotate:360deg}}
+@keyframes vortexIn{0%{opacity:0;transform:translate(-50%,-50%) scale(.12) rotate(-80deg)}28%,72%{opacity:1}100%{opacity:0;transform:translate(-50%,-50%) scale(1.65) rotate(210deg)}}
+@keyframes vortexOut{0%{opacity:0;transform:translate(-50%,-50%) scale(1.65) rotate(210deg)}30%,76%{opacity:1}100%{opacity:0;transform:translate(-50%,-50%) scale(.12) rotate(-80deg)}}
+@media(max-width:720px){.login-book{width:min(88vmin,560px)!important;height:min(88vmin,560px)!important}}
+@media(prefers-reduced-motion:reduce){.closing .login-book,.opening .login-book{animation-duration:.15s!important}.login-book>span{animation:none!important}}
