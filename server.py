@@ -365,6 +365,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not session: return
             try: status = (UPDATE_DIR / "status").read_text(encoding="utf-8").strip()
             except OSError: status = "idle"
+            if status == "checking":
+                started = 0
+                for marker in ("check_started", "check"):
+                    try: started = max(started, int((UPDATE_DIR / marker).read_text(encoding="utf-8").strip() or 0))
+                    except (OSError, ValueError): pass
+                if started and int(time.time()) - started > 120:
+                    status = "check_failed"
+                    try: (UPDATE_DIR / "status").write_text(status, encoding="utf-8")
+                    except OSError: pass
+                    LOGGER.warning("update check timed out after 120 seconds")
             try: update_log = (UPDATE_DIR / "update.log").read_text(encoding="utf-8", errors="replace").splitlines()[-120:]
             except OSError: update_log = []
             def update_value(name, default=""):
@@ -432,6 +442,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/update":
             if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
             UPDATE_DIR.mkdir(parents=True, exist_ok=True)
+            try: updater_alive = int(time.time()) - int((UPDATE_DIR / "heartbeat").read_text(encoding="utf-8").strip()) < 15
+            except (OSError, ValueError): updater_alive = False
+            if not updater_alive: self.send_json(503, {"error": "Der Updater ist nicht aktuell oder nicht erreichbar. Updater-Container neu bauen."}); return
             if (UPDATE_DIR / "status").exists() and (UPDATE_DIR / "status").read_text(encoding="utf-8").strip() == "running": self.send_json(409, {"error": "Ein Update läuft bereits"}); return
             (UPDATE_DIR / "request").write_text(str(int(time.time())), encoding="utf-8")
             (UPDATE_DIR / "status").write_text("queued", encoding="utf-8")
@@ -440,6 +453,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/update/check":
             if session["role"] != "admin": self.send_json(403, {"error": "Nur Administratoren"}); return
             UPDATE_DIR.mkdir(parents=True, exist_ok=True)
+            try: updater_alive = int(time.time()) - int((UPDATE_DIR / "heartbeat").read_text(encoding="utf-8").strip()) < 15
+            except (OSError, ValueError): updater_alive = False
+            if not updater_alive: self.send_json(503, {"error": "Der Updater ist nicht aktuell oder nicht erreichbar. Updater-Container neu bauen."}); return
             if (UPDATE_DIR / "status").exists() and (UPDATE_DIR / "status").read_text(encoding="utf-8").strip() in ("running", "queued"): self.send_json(409, {"error": "Während eines Updates ist keine Prüfung möglich"}); return
             (UPDATE_DIR / "check").write_text(str(int(time.time())), encoding="utf-8"); (UPDATE_DIR / "status").write_text("checking", encoding="utf-8")
             LOGGER.info("update check queued user=%s", session["username"]); self.send_json(202, {"ok": True, "status": "checking"}); return

@@ -7,7 +7,8 @@ chmod 666 /updates/update.log
 git config --global --add safe.directory /workspace
 check_updates() {
   printf 'checking' > /updates/status
-  if git -C /workspace fetch origin "${UPDATE_BRANCH:-main}" >> /updates/update.log 2>&1; then
+  date +%s > /updates/check_started
+  if timeout 90 git -C /workspace fetch origin "${UPDATE_BRANCH:-main}" >> /updates/update.log 2>&1; then
     local_commit=$(git -C /workspace rev-parse HEAD 2>/dev/null || true)
     remote_commit=$(git -C /workspace rev-parse "origin/${UPDATE_BRANCH:-main}" 2>/dev/null || true)
     printf '%s' "$local_commit" > /updates/local_commit
@@ -25,16 +26,19 @@ check_updates() {
     date +%s > /updates/last_checked
     date -u +'%Y-%m-%dT%H:%M:%SZ Update-Prüfung fehlgeschlagen' >> /updates/update.log
   fi
+  rm -f /updates/check_started
   chmod 666 /updates/status /updates/last_checked /updates/local_commit /updates/remote_commit 2>/dev/null || true
 }
 while true; do
+  date +%s > /updates/heartbeat
+  chmod 666 /updates/heartbeat 2>/dev/null || true
   if [ -f /updates/request ]; then
     rm -f /updates/request
     date -u +'%Y-%m-%dT%H:%M:%SZ UPDATE gestartet' >> /updates/update.log
     printf 'running' > /updates/status
     chmod 666 /updates/status
     date -u +'%Y-%m-%dT%H:%M:%SZ [1/4] GitHub-Änderungen abrufen' >> /updates/update.log
-    if git -C /workspace fetch origin "${UPDATE_BRANCH:-main}" >> /updates/update.log 2>&1; then
+    if timeout 120 git -C /workspace fetch origin "${UPDATE_BRANCH:-main}" >> /updates/update.log 2>&1; then
       date -u +'%Y-%m-%dT%H:%M:%SZ [2/4] Fast-Forward-Merge prüfen' >> /updates/update.log
     else
       printf 'failed' > /updates/status; date -u +'%Y-%m-%dT%H:%M:%SZ UPDATE fehlgeschlagen: GitHub nicht erreichbar' >> /updates/update.log; continue
