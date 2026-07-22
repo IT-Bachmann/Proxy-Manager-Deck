@@ -498,8 +498,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             accent, background, logo, favicon = body.get("accent", ""), body.get("background", ""), body.get("logo", ""), body.get("favicon", "")
             gateway_ipv4, gateway_ipv6 = body.get("gateway_ipv4", "").strip(), body.get("gateway_ipv6", "").strip(); ui_scale = str(body.get("ui_scale", "1"))
             image_re = re.compile(r"^data:image/(?:png|jpeg|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/=]+$")
-            if ui_scale not in ("0.5", "1", "1.0", "1.5") or any(not re.fullmatch(r"#[0-9a-fA-F]{6}", color) for color in (accent, background)) or any(value and (len(value) > 700_000 or not image_re.fullmatch(value)) for value in (logo, favicon)):
-                self.send_json(400, {"error": "Farbe oder Bilddatei ungültig (PNG/JPG/ICO, maximal 500 KB)"}); return
+            if ui_scale not in ("0.5", "1", "1.0", "1.5") or any(not re.fullmatch(r"#[0-9a-fA-F]{6}", color) for color in (accent, background)) or any(value and (len(value) > 2_800_000 or not image_re.fullmatch(value)) for value in (logo, favicon)):
+                self.send_json(400, {"error": "Farbe oder Bilddatei ungültig (PNG/JPG/ICO, maximal 2 MB)"}); return
             try:
                 if gateway_ipv4 and ipaddress.ip_address(gateway_ipv4).version != 4: raise ValueError()
                 if gateway_ipv6 and ipaddress.ip_address(gateway_ipv6).version != 6: raise ValueError()
