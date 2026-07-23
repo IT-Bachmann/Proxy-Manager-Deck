@@ -103,3 +103,13 @@ dialog.manager-dialog.update-dialog,dialog.manager-dialog.update-dialog .manager
 @keyframes vortexOut{0%{opacity:0;transform:translate(-50%,-50%) scale(1.65) rotate(210deg)}30%,76%{opacity:1}100%{opacity:0;transform:translate(-50%,-50%) scale(.12) rotate(-80deg)}}
 @media(max-width:720px){.login-book{width:min(88vmin,560px)!important;height:min(88vmin,560px)!important}}
 @media(prefers-reduced-motion:reduce){.closing .login-book,.opening .login-book{animation-duration:.15s!important}.login-book>span{animation:none!important}}
+
+/* Hochgeladenes Logo ersetzt das Zeichen; der Produktname steht darunter. */
+.brand:has(.custom-logo:not([hidden])){flex-direction:column;align-items:center;gap:5px;padding-top:0;padding-bottom:18px;text-align:center}
+.brand .custom-logo:not([hidden]){display:block;width:auto;max-width:184px!important;height:auto;max-height:76px!important;object-fit:contain}
+.brand .custom-logo:not([hidden])~span{display:block!important;font-size:17px!important;line-height:1.1;color:#fff}
+.login-brand:has(.custom-logo:not([hidden])){flex-direction:column;align-items:center;gap:7px;text-align:center}
+.login-brand .custom-logo:not([hidden]){width:auto;max-width:220px!important;height:auto;max-height:96px!important;object-fit:contain}
+.login-brand .custom-logo:not([hidden])~strong{display:block;font-size:20px}
+@media(max-width:1000px) and (min-width:721px){.brand .custom-logo:not([hidden]){max-width:54px!important;max-height:48px!important}.brand .custom-logo:not([hidden])~span{font-size:10px!important}}
+@media(max-width:720px){.sidebar.open .brand .custom-logo:not([hidden]){max-width:170px!important;max-height:70px!important}.sidebar.open .brand .custom-logo:not([hidden])~span{display:block!important;font-size:17px!important}}

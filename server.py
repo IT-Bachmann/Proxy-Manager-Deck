@@ -34,7 +34,8 @@ DB = DATA / "proxydeck.db"
 ACCESS_LOG = Path(os.environ.get("PROXYDECK_ACCESS_LOG", "/logs/access.log"))
 UPDATE_DIR = Path(os.environ.get("PROXYDECK_UPDATE_DIR", "/updates"))
 PORT = int(os.environ.get("PORT", "3000"))
-SESSION_TTL = 60 * 60 * 12
+SESSION_TTL = 60 * 10
+SESSION_COOKIE_TTL = 60 * 60 * 12
 SYSTEM_STARTED = int(time.time())
 HOST_RE = re.compile(r"^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$")
 MIME = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml"}
@@ -453,7 +454,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(24)
             with connect() as db: db.execute("INSERT INTO sessions(token_hash,user_id,csrf,expires_at) VALUES(?,?,?,?)", (hashlib.sha256(token.encode()).hexdigest(), user["id"], csrf, int(time.time()) + SESSION_TTL))
             secure = "; Secure" if os.environ.get("PROXYDECK_SECURE_COOKIE", "0") == "1" else ""
-            self.send_json(200, {"user": {"username": user["username"], "role": user["role"]}, "csrf": csrf}, {"Set-Cookie": f"proxydeck_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_TTL}{secure}"}); return
+            self.send_json(200, {"user": {"username": user["username"], "role": user["role"]}, "csrf": csrf}, {"Set-Cookie": f"proxydeck_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_COOKIE_TTL}{secure}"}); return
+        if path == "/api/session/activity":
+            session = self.require(("admin", "operator", "viewer"), csrf=True)
+            if not session: return
+            cookie = http.cookies.SimpleCookie(self.headers.get("cookie")); token = cookie.get("proxydeck_session")
+            if token:
+                token_hash = hashlib.sha256(token.value.encode()).hexdigest()
+                with connect() as db: db.execute("UPDATE sessions SET expires_at=? WHERE token_hash=?", (int(time.time()) + SESSION_TTL, token_hash))
+            self.send_json(200, {"ok": True}); return
         session = self.require(("admin", "operator"), csrf=True)
         if not session: return
         if path == "/api/update":

@@ -193,22 +193,30 @@ function applyAccount(user) {
 
 document.querySelector("#loginForm").addEventListener("submit", async event => {
   event.preventDefault(); const errorBox = document.querySelector("#loginError"); errorBox.textContent = "";
-  try { const data = await api("/api/login", { method: "POST", body: JSON.stringify({ username: document.querySelector("#loginUser").value, password: document.querySelector("#loginPassword").value }) }); state.csrf = data.csrf; applyAccount(data.user); const loginScreen=document.querySelector("#loginScreen"); loginScreen.classList.add("closing"); await new Promise(resolve=>setTimeout(resolve,900)); loginScreen.classList.add("hidden"); loginScreen.classList.remove("closing"); await loadHosts(); await showRealDashboard(); }
+  try { const data = await api("/api/login", { method: "POST", body: JSON.stringify({ username: document.querySelector("#loginUser").value, password: document.querySelector("#loginPassword").value }) }); state.csrf = data.csrf; startIdleLogout(); applyAccount(data.user); const loginScreen=document.querySelector("#loginScreen"); loginScreen.classList.add("closing"); await new Promise(resolve=>setTimeout(resolve,900)); loginScreen.classList.add("hidden"); loginScreen.classList.remove("closing"); await loadHosts(); await showRealDashboard(); }
   catch (error) { errorBox.textContent = error.message; const card=document.querySelector(".login-card");card.classList.remove("login-denied");void card.offsetWidth;card.classList.add("login-denied"); }
 });
 
 async function restoreSession() {
-  try { const data = await api("/api/session"); state.csrf = data.csrf; applyAccount(data.user); document.querySelector("#loginScreen").classList.add("hidden"); await loadHosts(); await showRealDashboard(); }
+  try { const data = await api("/api/session"); state.csrf = data.csrf; applyAccount(data.user); document.querySelector("#loginScreen").classList.add("hidden"); startIdleLogout(); await loadHosts(); await showRealDashboard(); }
   catch { renderTargets(); }
 }
 
-document.querySelector("#logoutButton").addEventListener("click",async()=>{
+let idleLogoutTimer=0,lastActivity=Date.now(),lastActivitySync=0;
+function stopIdleLogout(){clearTimeout(idleLogoutTimer);idleLogoutTimer=0}
+function startIdleLogout(){lastActivity=Date.now();stopIdleLogout();idleLogoutTimer=setTimeout(checkIdleLogout,600000)}
+function registerActivity(){if(!state.csrf)return;lastActivity=Date.now();clearTimeout(idleLogoutTimer);idleLogoutTimer=setTimeout(checkIdleLogout,600000);if(Date.now()-lastActivitySync>60000){lastActivitySync=Date.now();api("/api/session/activity",{method:"POST",body:"{}"}).catch(()=>{})}}
+function checkIdleLogout(){const remaining=600000-(Date.now()-lastActivity);if(remaining>0){idleLogoutTimer=setTimeout(checkIdleLogout,remaining);return}performLogout(true)}
+async function performLogout(automatic=false){
   const loginScreen=document.querySelector("#loginScreen");loginScreen.classList.remove("hidden");loginScreen.classList.add("opening");
   try{await api("/api/logout",{method:"POST",body:"{}"})}catch{}
-  state.csrf="";
+  state.csrf="";stopIdleLogout();
   document.querySelector("#loginPassword").value="";
-  setTimeout(()=>loginScreen.classList.remove("opening"),900);
-});
+  setTimeout(()=>{loginScreen.classList.remove("opening");if(automatic){const error=document.querySelector("#loginError");error.textContent="Du wurdest nach 10 Minuten Inaktivität automatisch abgemeldet."}},900);
+}
+document.querySelector("#logoutButton").addEventListener("click",()=>performLogout(false));
+["pointerdown","keydown","touchstart","scroll"].forEach(eventName=>window.addEventListener(eventName,registerActivity,{passive:true}));
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&state.csrf)checkIdleLogout()});
 
 const managerDialog = document.querySelector("#managerDialog");
 document.querySelector("#closeManager").addEventListener("click", () => { clearTimeout(updatePollTimer); managerDialog.close(); managerDialog.classList.remove("update-dialog"); });

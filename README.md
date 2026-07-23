@@ -31,6 +31,7 @@ Ein Proxy Host kann mehrere gemischte Ziele besitzen, beispielsweise eine intern
 - HTTP-Weiterleitungen und TCP-/UDP-Streams
 - Benutzerverwaltung mit Rollen `admin`, `operator` und `viewer`
 - PBKDF2-SHA256-Passwort-Hashes, HttpOnly-Sitzungen und CSRF-Schutz
+- automatische Abmeldung nach zehn Minuten ohne Benutzeraktivität
 - verschlüsselte API-Schlüssel in SQLite; Änderungen erst nach erneuter Passworteingabe
 - Benachrichtigungen über SMTP/E-Mail, Telegram und WhatsApp Cloud API
 - Traffic-, Treffer-, Latenz- und Fehlerauswertung aus echten Nginx-Logs
@@ -166,6 +167,7 @@ A proxy host may contain multiple mixed targets, such as an internal IPv4 addres
 - HTTP redirects and TCP/UDP streams
 - user management with `admin`, `operator`, and `viewer` roles
 - PBKDF2-SHA256 password hashes, HttpOnly sessions, and CSRF protection
+- automatic sign-out after ten minutes without user activity
 - encrypted API secrets in SQLite; changing secrets requires password confirmation
 - SMTP/email, Telegram, and WhatsApp Cloud API notifications
 - traffic, request, latency, and error analytics from real Nginx logs
