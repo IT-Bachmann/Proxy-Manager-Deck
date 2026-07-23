@@ -130,6 +130,8 @@ docker compose ps
 docker compose logs --tail=100 control gateway updater
 ```
 
+Nach der Umstellung von einer älteren Testversion muss der Updater einmal manuell neu erstellt werden, damit nicht mehr der frühere selbstlöschende Prozess läuft: `docker compose up -d --build --force-recreate updater`.
+
 ### Proxmox LXC
 
 Auf dem Proxmox-Host müssen für den LXC normalerweise Nesting und Keyctl aktiviert werden:
@@ -251,6 +253,8 @@ Check the service status:
 docker compose ps
 docker compose logs --tail=100 control gateway updater
 ```
+
+When upgrading from an older test build, recreate the updater once so the former self-removing process is no longer running: `docker compose up -d --build --force-recreate updater`.
 
 ### Proxmox LXC
 

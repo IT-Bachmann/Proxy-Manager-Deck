@@ -111,5 +111,6 @@ dialog.manager-dialog.update-dialog,dialog.manager-dialog.update-dialog .manager
 .login-brand:has(.custom-logo:not([hidden])){flex-direction:column;align-items:center;gap:7px;text-align:center}
 .login-brand .custom-logo:not([hidden]){width:auto;max-width:220px!important;height:auto;max-height:96px!important;object-fit:contain}
 .login-brand .custom-logo:not([hidden])~strong{display:block;font-size:20px}
+.has-custom-logo .book-cover .logo{background-color:transparent!important;background-repeat:no-repeat!important;background-position:center!important;background-size:contain!important;box-shadow:none!important}
 @media(max-width:1000px) and (min-width:721px){.brand .custom-logo:not([hidden]){max-width:54px!important;max-height:48px!important}.brand .custom-logo:not([hidden])~span{font-size:10px!important}}
 @media(max-width:720px){.sidebar.open .brand .custom-logo:not([hidden]){max-width:170px!important;max-height:70px!important}.sidebar.open .brand .custom-logo:not([hidden])~span{display:block!important;font-size:17px!important}}

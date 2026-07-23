@@ -53,6 +53,7 @@ services:
   updater:
     build: ./updater
     restart: unless-stopped
+    command: ["/bin/sh", "/workspace/updater/update.sh"]
     healthcheck:
       test: ["CMD-SHELL", "test -f /updates/heartbeat && test $$(($$(date +%s) - $$(cat /updates/heartbeat))) -lt 20"]
       interval: 15s
