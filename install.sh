@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-PROGRAM="ProxyDeck"
+PROGRAM="ProxyManagerDeck"
 MIN_DOCKER_MAJOR=24
 SKIP_DOCKER_INSTALL=0
 NO_START=0
@@ -22,7 +22,7 @@ usage() {
     '  --force-ports          Continue despite detected port conflicts' \
     '  -h, --help             Show this help' \
     '' \
-    'Run this script from the ProxyDeck repository directory.'
+    'Run this script from the ProxyManagerDeck repository directory.'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -38,7 +38,7 @@ done
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$SCRIPT_DIR"
-[ -f compose.yml ] || die "compose.yml not found. Run the script from a complete ProxyDeck checkout."
+[ -f compose.yml ] || die "compose.yml not found. Run the script from a complete ProxyManagerDeck checkout."
 
 if [ "$(uname -s)" != "Linux" ]; then
   die "This installer supports Linux. On other systems install Docker Compose and run: docker compose up -d --build"
@@ -50,7 +50,7 @@ if [ "$container_type" = "lxc" ] || grep -qaE 'lxc|container=' /proc/1/environ 2
   warn "LXC detected. On the Proxmox host, enable nesting=1 and keyctl=1 for this container before running Docker."
   warn "Example on the PVE host: pct set CTID -features nesting=1,keyctl=1"
   if [ -r /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" = "1" ]; then
-    warn "IPv6 is disabled inside this LXC. ProxyDeck starts with its private Docker ULA subnet, but external IPv6 upstreams require IPv6 on the LXC network interface."
+    warn "IPv6 is disabled inside this LXC. ProxyManagerDeck starts with its private Docker ULA subnet, but external IPv6 upstreams require IPv6 on the LXC network interface."
   fi
 fi
 
@@ -177,7 +177,7 @@ port_in_use() {
 conflicting_ports=""
 existing_project=$($COMPOSE ps -q 2>/dev/null || true)
 if [ -n "$existing_project" ]; then
-  warn "An existing ProxyDeck Compose project was detected; host-port collision checks are skipped for this upgrade."
+  warn "An existing ProxyManagerDeck Compose project was detected; host-port collision checks are skipped for this upgrade."
 else
   for checked_port in 80 443 8181 45130; do
     if port_in_use "$checked_port"; then conflicting_ports="$conflicting_ports $checked_port"; fi
@@ -223,15 +223,17 @@ if [ ! -f .env ]; then
   {
     printf 'PROXYDECK_ADMIN_USER=admin\n'
     printf 'PROXYDECK_ADMIN_PASSWORD=%s\n' "$admin_password"
+    printf 'PROXYDECK_UPDATE_REF=main\n'
+    printf 'PROXYDECK_UPDATE_CHECK_INTERVAL=21600\n'
     printf 'PROXYDECK_SECRET_KEY=%s\n' "$secret_key"
     printf 'PROXYDECK_SECURE_COOKIE=0\n'
   } > .env
   {
-    printf 'ProxyDeck Dashboard IPv4: %s\n' "$dashboard_url"
-    printf 'ProxyDeck Demo IPv4: %s\n' "$demo_url"
+    printf 'ProxyManagerDeck Dashboard IPv4: %s\n' "$dashboard_url"
+    printf 'ProxyManagerDeck Demo IPv4: %s\n' "$demo_url"
     if [ -n "$primary_ipv6" ]; then
-      printf 'ProxyDeck Dashboard IPv6: http://[%s]:8181\n' "$primary_ipv6"
-      printf 'ProxyDeck Demo IPv6: http://[%s]:45130\n' "$primary_ipv6"
+      printf 'ProxyManagerDeck Dashboard IPv6: http://[%s]:8181\n' "$primary_ipv6"
+      printf 'ProxyManagerDeck Demo IPv6: http://[%s]:45130\n' "$primary_ipv6"
     fi
     printf 'Benutzer: admin\n'
     printf 'Passwort: %s\n' "$admin_password"
@@ -243,18 +245,25 @@ else
   credentials_created=0
   warn ".env already exists; existing credentials were preserved."
 fi
+if ! grep -q '^PROXYDECK_UPDATE_REF=' .env; then
+  printf 'PROXYDECK_UPDATE_REF=main\n' >> .env
+fi
+if ! grep -q '^PROXYDECK_UPDATE_CHECK_INTERVAL=' .env; then
+  printf 'PROXYDECK_UPDATE_CHECK_INTERVAL=21600\n' >> .env
+fi
+chmod 600 .env
 
 # Refresh addresses in the credentials note on every run without changing the password.
 if [ -f proxydeck-login.txt ]; then
   login_tmp=$(mktemp "${TMPDIR:-/tmp}/proxydeck-login.XXXXXX")
   {
-    printf 'ProxyDeck Dashboard IPv4: %s\n' "$dashboard_url"
-    printf 'ProxyDeck Demo IPv4: %s\n' "$demo_url"
+    printf 'ProxyManagerDeck Dashboard IPv4: %s\n' "$dashboard_url"
+    printf 'ProxyManagerDeck Demo IPv4: %s\n' "$demo_url"
     if [ -n "$primary_ipv6" ]; then
-      printf 'ProxyDeck Dashboard IPv6: http://[%s]:8181\n' "$primary_ipv6"
-      printf 'ProxyDeck Demo IPv6: http://[%s]:45130\n' "$primary_ipv6"
+      printf 'ProxyManagerDeck Dashboard IPv6: http://[%s]:8181\n' "$primary_ipv6"
+      printf 'ProxyManagerDeck Demo IPv6: http://[%s]:45130\n' "$primary_ipv6"
     fi
-    awk '!/^ProxyDeck Dashboard/ && !/^ProxyDeck Demo/ && !/^Remote-Zugriff:/' proxydeck-login.txt
+    awk '!/^ProxyManagerDeck Dashboard/ && !/^ProxyManagerDeck Demo/ && !/^Remote-Zugriff:/' proxydeck-login.txt
   } > "$login_tmp"
   mv "$login_tmp" proxydeck-login.txt
   chmod 600 proxydeck-login.txt
@@ -264,7 +273,7 @@ say "Validating Docker Compose configuration"
 $COMPOSE config --quiet
 
 if [ "$NO_START" -eq 0 ]; then
-  say "Building and starting ProxyDeck"
+  say "Building and starting ProxyManagerDeck"
   $COMPOSE up -d --build
   say "Container status"
   $COMPOSE ps
@@ -282,7 +291,7 @@ if [ "$NO_START" -eq 0 ]; then
   fi
 fi
 
-printf '\n\033[1;32mProxyDeck installation prepared successfully.\033[0m\n'
+printf '\n\033[1;32mProxyManagerDeck installation prepared successfully.\033[0m\n'
 printf 'Dashboard IPv4: %s\n' "$dashboard_url"
 printf 'Demo IPv4:      %s\n' "$demo_url"
 if [ -n "$primary_ipv6" ]; then

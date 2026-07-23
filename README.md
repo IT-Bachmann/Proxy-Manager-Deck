@@ -1,4 +1,4 @@
-# ProxyDeck
+# ProxyManagerDeck
 
 Eine responsive, selbst gehostete Reverse-Proxy-Verwaltung für Nginx mit mehreren IPv4-, IPv6- und Hostname-Upstreams pro Domain.
 
@@ -6,7 +6,7 @@ A responsive, self-hosted Nginx reverse-proxy manager supporting multiple IPv4, 
 
 [Deutsch](#deutsch) · [English](#english)
 
-> ProxyDeck befindet sich in aktiver Entwicklung. Vor einem öffentlichen Produktionseinsatz sind HTTPS für das Dashboard, Firewall-Regeln und regelmäßige Volume-Backups erforderlich.
+> ProxyManagerDeck befindet sich in aktiver Entwicklung. Vor einem öffentlichen Produktionseinsatz sind HTTPS für das Dashboard, Firewall-Regeln und regelmäßige Volume-Backups erforderlich.
 
 ---
 
@@ -14,7 +14,7 @@ A responsive, self-hosted Nginx reverse-proxy manager supporting multiple IPv4, 
 
 ### Überblick
 
-ProxyDeck verwaltet Reverse Proxies, Weiterleitungen, TCP-/UDP-Streams, Zertifikate und Healthchecks über eine eigene Weboberfläche. Die Anwendung verwendet SQLite für persistente Daten und erzeugt reale Nginx-Konfigurationen. Änderungen werden atomar geschrieben, mit `nginx -t` geprüft und anschließend ohne vollständigen Gateway-Neustart geladen.
+ProxyManagerDeck verwaltet Reverse Proxies, Weiterleitungen, TCP-/UDP-Streams, Zertifikate und Healthchecks über eine eigene Weboberfläche. Die Anwendung verwendet SQLite für persistente Daten und erzeugt reale Nginx-Konfigurationen. Änderungen werden atomar geschrieben, mit `nginx -t` geprüft und anschließend ohne vollständigen Gateway-Neustart geladen.
 
 Ein Proxy Host kann mehrere gemischte Ziele besitzen, beispielsweise eine interne IPv4-Adresse und eine öffentliche IPv6-Adresse. Damit wird eine Domain nur einmal angelegt und trotzdem auf mehrere Ziele verteilt.
 
@@ -27,9 +27,11 @@ Ein Proxy Host kann mehrere gemischte Ziele besitzen, beispielsweise eine intern
 - automatische HTTP-zu-HTTPS-Weiterleitung bei aktiviertem SSL
 - Let's Encrypt über ACME HTTP-01 und DNS-01
 - Multi-Domain-/SAN- und Wildcard-Zertifikate
+- eigene Zertifikatsseite mit Einzelstatus, ZIP-Download und sicherem Löschen
 - DNS-Anbieter: Cloudflare, DigitalOcean, AWS Route 53, IONOS, Hetzner DNS, IPv64.net, STRATO und PowerDNS
 - HTTP-Weiterleitungen und TCP-/UDP-Streams
 - Benutzerverwaltung mit Rollen `admin`, `operator` und `viewer`
+- eigene Benutzerseite mit Bearbeiten, Aktivieren/Deaktivieren, Passwortwechsel und geschütztem Löschen
 - PBKDF2-SHA256-Passwort-Hashes, HttpOnly-Sitzungen und CSRF-Schutz
 - automatische Abmeldung nach zehn Minuten ohne Benutzeraktivität
 - verschlüsselte API-Schlüssel in SQLite; Änderungen erst nach erneuter Passworteingabe
@@ -110,11 +112,21 @@ Demo-Zugang: `admin` / `proxydeck-demo`. Demo-Änderungen bleiben ausschließlic
 
 ### Zertifikate
 
-Für HTTP-01 müssen A- und/oder AAAA-Record auf das ProxyDeck-Gateway zeigen und Port 80 von außen erreichbar sein. Wildcards wie `*.example.com` benötigen DNS-01 und ein konfiguriertes DNS-Plugin. Ein Zertifikat wird zunächst bewusst in der Zertifikatsverwaltung angefordert und anschließend dem Proxy Host zugewiesen. Bereits ausgestellte Zertifikate werden automatisch erneuert.
+Für HTTP-01 müssen A- und/oder AAAA-Record auf das ProxyManagerDeck-Gateway zeigen und Port 80 von außen erreichbar sein. Wildcards wie `*.example.com` benötigen DNS-01 und ein konfiguriertes DNS-Plugin. Ein Zertifikat wird zunächst bewusst in der Zertifikatsverwaltung angefordert und anschließend dem Proxy Host zugewiesen. Bereits ausgestellte Zertifikate werden automatisch erneuert.
 
 ### Updates
 
-ProxyDeck prüft standardmäßig alle sechs Stunden sowie manuell über die Oberfläche auf neue Commits. Der Updater besitzt einen Heartbeat und beendet festhängende Git-Abfragen per Timeout. Er erstellt sich während eines Updates nicht mehr selbst neu, sondern lädt sein aktualisiertes Skript ohne Unterbrechung.
+ProxyManagerDeck prüft standardmäßig alle sechs Stunden sowie manuell über die Oberfläche auf neue Commits. Der Updater besitzt einen Heartbeat und beendet festhängende Git-Abfragen per Timeout. Er erstellt sich während eines Updates nicht mehr selbst neu, sondern lädt sein aktualisiertes Skript ohne Unterbrechung.
+
+Branch oder Versions-Tag werden in `.env` gewählt:
+
+```env
+PROXYDECK_UPDATE_REF=main
+```
+
+Danach `docker compose up -d --force-recreate updater` ausführen. Möglich
+sind beispielsweise `stable`, `v1.2.0` oder `main`. Nicht
+Fast-Forward-kompatible Downgrades werden abgelehnt.
 
 Manuelles Update:
 
@@ -152,7 +164,7 @@ Persistente Daten liegen in Docker-Volumes für SQLite, Zertifikate, generierte 
 
 ### Overview
 
-ProxyDeck manages reverse proxies, redirects, TCP/UDP streams, certificates, and health checks through a dedicated web interface. It stores persistent state in SQLite and generates real Nginx configuration. Changes are written atomically, validated with `nginx -t`, and reloaded without restarting the entire gateway.
+ProxyManagerDeck manages reverse proxies, redirects, TCP/UDP streams, certificates, and health checks through a dedicated web interface. It stores persistent state in SQLite and generates real Nginx configuration. Changes are written atomically, validated with `nginx -t`, and reloaded without restarting the entire gateway.
 
 A proxy host may contain multiple mixed targets, such as an internal IPv4 address and a public IPv6 address. The domain is created once and traffic can still be distributed across several destinations.
 
@@ -165,9 +177,11 @@ A proxy host may contain multiple mixed targets, such as an internal IPv4 addres
 - automatic HTTP-to-HTTPS redirects when SSL is enabled
 - Let's Encrypt using ACME HTTP-01 and DNS-01
 - multi-domain/SAN and wildcard certificates
+- dedicated certificate page with per-certificate status, ZIP download, and safe deletion
 - DNS providers: Cloudflare, DigitalOcean, AWS Route 53, IONOS, Hetzner DNS, IPv64.net, STRATO, and PowerDNS
 - HTTP redirects and TCP/UDP streams
 - user management with `admin`, `operator`, and `viewer` roles
+- dedicated user page for editing, enabling/disabling, password changes, and protected deletion
 - PBKDF2-SHA256 password hashes, HttpOnly sessions, and CSRF protection
 - automatic sign-out after ten minutes without user activity
 - encrypted API secrets in SQLite; changing secrets requires password confirmation
@@ -234,11 +248,16 @@ Then open `http://127.0.0.1:8181` locally. The demo is available at `http://SERV
 
 ### Certificates
 
-For HTTP-01, the domain's A and/or AAAA records must point to the ProxyDeck gateway and port 80 must be publicly reachable. Wildcards such as `*.example.com` require DNS-01 and a configured DNS plugin. Certificates are deliberately requested from the certificate manager and then assigned to a proxy host. Issued certificates are renewed automatically.
+For HTTP-01, the domain's A and/or AAAA records must point to the ProxyManagerDeck gateway and port 80 must be publicly reachable. Wildcards such as `*.example.com` require DNS-01 and a configured DNS plugin. Certificates are deliberately requested from the certificate manager and then assigned to a proxy host. Issued certificates are renewed automatically.
 
 ### Updates
 
-ProxyDeck checks for new commits every six hours by default and can also be checked manually from the interface. The updater uses a heartbeat and timeouts for stalled Git operations. It no longer recreates its own container during an update; it reloads the updated script without interruption.
+ProxyManagerDeck checks for new commits every six hours by default and can also be checked manually from the interface. The updater uses a heartbeat and timeouts for stalled Git operations. It no longer recreates its own container during an update; it reloads the updated script without interruption.
+
+Choose the branch or version tag in `.env` using
+`PROXYDECK_UPDATE_REF=main`, then run
+`docker compose up -d --force-recreate updater`. Values such as `stable`,
+`v1.2.0`, or `main` are supported. Non-fast-forward downgrades are rejected.
 
 Manual update:
 
